@@ -11,7 +11,9 @@
       "import": "./dist/index.js",
       "require": "./dist/index.cjs",
       "types": "./dist/index.d.ts"
-    }
+    },
+    "./conformance-suite": "./src/conformance-suite.ts",
+    "./mocks": "./src/mocks/mock-channel-server.ts"
   },
   "scripts": {
     "build": "vite build",
