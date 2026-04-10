@@ -1,26 +1,19 @@
 {
   "name": "@openthreads/core",
-  "version": "0.0.1",
-  "private": false,
+  "version": "0.1.0",
+  "private": true,
   "type": "module",
-  "main": "./dist/index.cjs",
-  "module": "./dist/index.js",
-  "types": "./dist/index.d.ts",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
   "exports": {
-    ".": {
-      "import": "./dist/index.js",
-      "require": "./dist/index.cjs",
-      "types": "./dist/index.d.ts"
-    }
+    ".": "./src/index.ts"
   },
   "scripts": {
-    "build": "vite build",
-    "dev": "vite build --watch",
-    "test": "bun test"
+    "test": "bun test",
+    "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
-    "vite": "*",
-    "vite-plugin-dts": "*",
-    "typescript": "*"
+    "@types/bun": "latest",
+    "typescript": "^5.0.0"
   }
 }

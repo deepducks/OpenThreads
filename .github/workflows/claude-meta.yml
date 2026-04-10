@@ -56,15 +56,18 @@ jobs:
             4. Identify the next unchecked issues whose ALL dependencies are checked (done).
 
             5. For each ready issue:
-               a. Comment on it with:
+               a. Comment on it with (use EXACTLY this format):
                   ```
-                  @claude Implement this issue.
-                  - Base branch: `meta/<N>`
-                  - Create your working branch as: `claude/<N>-<issue_number>-<short_slug>`
-                  - Target your PR to `meta/<N>`
-                  - Include `fixes #<issue_number>` in the PR body
+                  @claude Implement this issue. Follow these steps precisely:
+                  1. Checkout the base branch and create your working branch:
+                     git fetch origin meta/<N> && git checkout meta/<N> && git checkout -b claude/<N>-<issue_number>-<short_slug>
+                  2. Implement all tasks listed in this issue
+                  3. Commit and push your branch:
+                     git push -u origin claude/<N>-<issue_number>-<short_slug>
+                  4. Create a PR targeting meta/<N>:
+                     gh pr create --base meta/<N> --head claude/<N>-<issue_number>-<short_slug> --title "<issue title>" --body "fixes #<issue_number>"
                   ```
-               b. If the issue has label `priority:P0`, add to the comment: "Enable auto-merge on the PR."
+               b. If the issue has label `priority:P0`, add to the comment: "Enable auto-merge on the PR with: gh pr merge --auto --merge"
 
             6. Comment on the meta issue summarizing: which issues were marked done, which were assigned, what's next.
 

@@ -1,10 +1,14 @@
 {
-  "$schema": "https://json.schemastore.org/tsconfig",
-  "files": [],
-  "references": [
-    { "path": "packages/core" },
-    { "path": "packages/storage/mongodb" },
-    { "path": "packages/channels" },
-    { "path": "packages/trust" }
-  ]
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "exactOptionalPropertyTypes": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "isolatedModules": true
+  }
 }
