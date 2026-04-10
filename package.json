@@ -1,0 +1,11 @@
+{
+  "name": "openthreads",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": ["packages/*"],
+  "scripts": {
+    "test": "bun --filter '*' test",
+    "build": "bun --filter '*' build",
+    "typecheck": "bun --filter '*' typecheck"
+  }
+}
