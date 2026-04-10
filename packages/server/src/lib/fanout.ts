@@ -6,12 +6,18 @@
  */
 
 import type { Recipient } from '@openthreads/core';
+import { withRetry, type RetryOptions } from './retry.js';
 
 export interface DeliverOptions {
   recipient: Recipient;
   payload: unknown;
   /** Timeout in milliseconds (default: 30s) */
   timeoutMs?: number;
+}
+
+export interface DeliverWithRetryOptions extends DeliverOptions {
+  /** Retry configuration. Defaults: maxAttempts=3, initialDelayMs=1000, backoffFactor=2 */
+  retryOptions?: Partial<RetryOptions>;
 }
 
 export interface DeliverResult {
@@ -55,6 +61,59 @@ export async function deliverToRecipient(options: DeliverOptions): Promise<Deliv
     return { success: false, error };
   } finally {
     clearTimeout(timer);
+  }
+}
+
+/**
+ * POST the envelope payload to the recipient's webhook URL with automatic
+ * retry on transient failures (network errors, 5xx responses).
+ *
+ * Uses exponential backoff — initial 1 s delay, doubling up to 30 s.
+ * 4xx responses (client errors) are considered non-retryable.
+ */
+export async function deliverWithRetry(
+  options: DeliverWithRetryOptions,
+): Promise<DeliverResult> {
+  const { retryOptions = {}, ...deliverOptions } = options;
+
+  return withRetry(
+    async () => {
+      const result = await deliverToRecipient(deliverOptions);
+
+      // Treat 4xx as non-retryable client errors — the caller sent bad data.
+      if (!result.success && result.status !== undefined && result.status >= 400 && result.status < 500) {
+        // Signal to withRetry to not retry by throwing a non-retryable sentinel.
+        const err = new NonRetryableError(`Recipient returned ${result.status}`);
+        (err as unknown as { result: DeliverResult }).result = result;
+        throw err;
+      }
+
+      if (!result.success) {
+        throw new Error(result.error ?? `Delivery failed (status ${result.status ?? 'unknown'})`);
+      }
+
+      return result;
+    },
+    {
+      ...retryOptions,
+      retryable: (err) => !(err instanceof NonRetryableError),
+    },
+  ).catch((err: unknown) => {
+    // If the final error wraps a DeliverResult (from a 4xx), return it directly.
+    if (err instanceof NonRetryableError) {
+      const wrapped = (err as unknown as { result?: DeliverResult }).result;
+      if (wrapped) return wrapped;
+    }
+    const error = err instanceof Error ? err.message : String(err);
+    return { success: false, error } as DeliverResult;
+  });
+}
+
+/** Sentinel error type used to stop retrying on 4xx responses. */
+class NonRetryableError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'NonRetryableError';
   }
 }
 
