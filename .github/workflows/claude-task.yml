@@ -13,9 +13,11 @@ on:
 jobs:
   execute:
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     if: >
       contains(github.event.comment.body, '@claude')
       && !contains(toJSON(github.event.issue.labels.*.name), 'meta')
+      && !contains(github.event.comment.body, '@claude fix')
     steps:
       - name: Extract meta context from comment
         id: meta
@@ -52,10 +54,7 @@ jobs:
           # Find branch pushed by claude action for this issue
           BRANCH=$(git ls-remote --heads origin "claude/*-issue-${ISSUE_NUM}-*" | awk '{print $2}' | sed 's|refs/heads/||' | sort | tail -1)
 
-          # Fallback: try older naming pattern
-          if [ -z "$BRANCH" ]; then
-            BRANCH=$(git ls-remote --heads origin "claude/*/issue-${ISSUE_NUM}-*" | awk '{print $2}' | sed 's|refs/heads/||' | sort | tail -1)
-          fi
+          # Fallback: try other naming patterns
           if [ -z "$BRANCH" ]; then
             BRANCH=$(git ls-remote --heads origin "claude/*issue-${ISSUE_NUM}*" | awk '{print $2}' | sed 's|refs/heads/||' | sort | tail -1)
           fi
@@ -104,3 +103,36 @@ jobs:
           fi
 
           echo "PR #$PR_NUM merged after conflict resolution"
+
+      - name: Notify failure on meta issue
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE_NUM: ${{ github.event.issue.number }}
+          META_NUM: ${{ steps.meta.outputs.meta_number }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          # Find the meta issue by label
+          META_ISSUE=$(gh issue list --label meta --json number --jq ".[[] | select(.number == ${META_NUM})] .number" 2>/dev/null || echo "$META_NUM")
+          if [ -z "$META_ISSUE" ] || [ "$META_ISSUE" = "0" ]; then
+            META_ISSUE=$(gh issue list --label meta --json number --jq '.[0].number' 2>/dev/null || echo "")
+          fi
+
+          if [ -n "$META_ISSUE" ]; then
+            gh issue comment "$META_ISSUE" --body "$(cat <<EOF
+          ⚠️ **Task Worker Failed** — Issue #${ISSUE_NUM}
+
+          - **Run:** https://github.com/${{ github.repository }}/actions/runs/${RUN_ID}
+          - **Issue:** #${ISSUE_NUM}
+          - **Action needed:** Comment \`@claude fix\` on issue #${ISSUE_NUM} to retry with error context.
+          EOF
+          )"
+          fi
+
+          # Also comment on the issue itself
+          gh issue comment "$ISSUE_NUM" --body "$(cat <<EOF
+          ⚠️ **Task worker failed.** [View logs](https://github.com/${{ github.repository }}/actions/runs/${RUN_ID})
+
+          To retry with fix context, comment \`@claude fix\` on this issue.
+          EOF
+          )"
