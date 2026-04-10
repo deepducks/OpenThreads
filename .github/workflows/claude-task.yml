@@ -1,3 +1,98 @@
+# =============================================================================
+# Claude Task Worker
+# =============================================================================
+#
+# PURPOSE
+# -------
+# Implements a single issue from the implementation plan. Triggered when the
+# Meta Orchestrator (or a human) comments `@claude` on a task issue. Reads
+# the issue body as its specification, writes code, creates a PR, and merges.
+#
+# HOW IT WORKS
+# ------------
+# 1. Triggered by an `@claude` comment on a non-meta issue.
+#    (Excludes `@claude fix` — that's handled by the Fix Agent.)
+# 2. Extracts the base branch from the comment (e.g., `meta/17`).
+#    The meta orchestrator always includes `Base branch: \`meta/<N>\`` in
+#    its trigger comment. Falls back to `main` if not found.
+# 3. Checks out the base branch (NOT `main`) — this is critical to avoid
+#    merge conflicts. Earlier iterations checked out `main`, causing every
+#    PR to conflict with the meta branch.
+# 4. Runs the Claude agent in interactive mode (no `prompt` input).
+#    The agent reads the issue body (tasks, acceptance criteria) and the
+#    triggering comment (base branch instructions) as context.
+# 5. After the agent finishes, a post-step automatically:
+#    a. Finds the branch the agent pushed
+#    b. Creates a PR targeting the meta branch
+#    c. Merges the PR (with conflict resolution if needed)
+#
+# BRANCH MODEL
+# ------------
+# The `branch_prefix` is set dynamically to `claude/<meta_number>-` so that
+# task branches are namespaced under their meta issue:
+#   meta/17 → claude/17-issue-4-20260410-2205
+#
+# This was added because early iterations used the default `claude/` prefix,
+# making it hard to associate branches with their meta issue.
+#
+# WHY DYNAMIC `base_branch`
+# -------------------------
+# The action's `base_branch` input controls two things:
+# 1. Which branch to diff against (determines what's "new")
+# 2. Which branch PRs target
+# By extracting it from the meta orchestrator's comment, we ensure each task
+# automatically targets the correct meta branch without hardcoding.
+#
+# WHY NO `prompt` INPUT
+# ---------------------
+# Without `prompt`, the action runs in "interactive mode" — it reads the
+# issue body and triggering comment as context. This is correct because:
+# - The issue body contains the full spec (tasks, acceptance criteria)
+# - The comment contains branch instructions from the orchestrator
+# - The action's built-in system prompt provides GitHub context
+# Adding a `prompt` would switch to automation mode and lose the issue context.
+#
+# AUTO PR + MERGE (post-step)
+# ---------------------------
+# The `claude-code-action` in interactive mode does NOT create PRs — it pushes
+# a branch and posts a "Create PR" link. We added a post-step that:
+# 1. Finds the branch by matching `claude/*issue-<N>*`
+# 2. Creates a PR with `fixes #<N>` in the body
+# 3. Tries a direct merge; if conflicts exist, rebases onto the base branch
+# 4. If rebase fails, falls back to `merge -X theirs`
+# This makes the entire flow autonomous — no human needs to create PRs.
+#
+# CONFLICT RESOLUTION STRATEGY
+# ----------------------------
+# Conflicts can happen when multiple tasks in the same wave modify shared
+# files (e.g., package.json, index.ts). Resolution order:
+# 1. Direct merge (no conflicts) → done
+# 2. Rebase onto base branch → push with --force-with-lease → merge
+# 3. Merge with -X theirs (accept base branch for conflicting hunks) → push
+# The `-X theirs` fallback prefers the base branch's version in conflicts,
+# which may lose some task changes — but it keeps the loop moving. The fix
+# agent can clean up if needed.
+#
+# TIMEOUT
+# -------
+# 60-minute hard limit. Complex issues (e.g., full adapter implementations)
+# can take 10-15 minutes. The timeout prevents runaway costs if the agent
+# gets stuck in a loop.
+#
+# FAILURE HANDLING
+# ----------------
+# On failure, two notifications are posted:
+# 1. On the meta issue: "Task #X failed" with run link and retry instructions
+# 2. On the task issue itself: failure notice + `@claude fix` instructions
+# This allows both the orchestrator and humans to see what broke.
+#
+# `allowed_bots`
+# --------------
+# Set to `claude[bot]` because the Meta Orchestrator (which runs as
+# `claude[bot]`) is the one commenting `@claude` on task issues. Without
+# this, the action rejects bot-initiated triggers.
+# =============================================================================
+
 name: Claude Task Worker
 
 permissions:
@@ -14,11 +109,18 @@ jobs:
   execute:
     runs-on: ubuntu-latest
     timeout-minutes: 60
+
+    # Trigger on @claude comments on non-meta issues.
+    # Excludes @claude fix (handled by claude-fix.yml).
     if: >
       contains(github.event.comment.body, '@claude')
       && !contains(toJSON(github.event.issue.labels.*.name), 'meta')
       && !contains(github.event.comment.body, '@claude fix')
+
     steps:
+      # --- Extract base branch from the orchestrator's comment ---
+      # The meta orchestrator always includes: Base branch: `meta/<N>`
+      # We parse this to dynamically configure checkout and PR target.
       - name: Extract meta context from comment
         id: meta
         env:
@@ -29,12 +131,17 @@ jobs:
           echo "base_branch=$BASE_BRANCH" >> "$GITHUB_OUTPUT"
           echo "meta_number=$META_NUM" >> "$GITHUB_OUTPUT"
 
+      # --- Checkout the meta branch, NOT main ---
+      # This eliminates the root cause of merge conflicts. Early iterations
+      # checked out main, so every task branch diverged from meta/<N>.
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           ref: ${{ steps.meta.outputs.base_branch }}
           fetch-depth: 0
 
+      # --- Run the Claude agent ---
+      # Interactive mode: reads issue body + comment as context.
       - name: Run Claude Task Worker
         uses: anthropics/claude-code-action@v1
         with:
@@ -44,6 +151,9 @@ jobs:
           base_branch: ${{ steps.meta.outputs.base_branch }}
           branch_prefix: "claude/${{ steps.meta.outputs.meta_number }}-"
 
+      # --- Auto-create PR and merge ---
+      # The action pushes a branch but does not create a PR in interactive mode.
+      # This step closes the loop by creating the PR and merging it.
       - name: Auto-create PR and merge
         if: success()
         env:
@@ -104,6 +214,8 @@ jobs:
 
           echo "PR #$PR_NUM merged after conflict resolution"
 
+      # --- Failure notification ---
+      # Posts on both the meta issue and the task issue so failures are visible.
       - name: Notify failure on meta issue
         if: failure()
         env:
@@ -112,7 +224,6 @@ jobs:
           META_NUM: ${{ steps.meta.outputs.meta_number }}
           RUN_ID: ${{ github.run_id }}
         run: |
-          # Find the meta issue by label
           META_ISSUE=$(gh issue list --label meta --json number --jq ".[[] | select(.number == ${META_NUM})] .number" 2>/dev/null || echo "$META_NUM")
           if [ -z "$META_ISSUE" ] || [ "$META_ISSUE" = "0" ]; then
             META_ISSUE=$(gh issue list --label meta --json number --jq '.[0].number' 2>/dev/null || echo "")
@@ -129,7 +240,6 @@ jobs:
           )"
           fi
 
-          # Also comment on the issue itself
           gh issue comment "$ISSUE_NUM" --body "$(cat <<EOF
           ⚠️ **Task worker failed.** [View logs](https://github.com/${{ github.repository }}/actions/runs/${RUN_ID})
 

@@ -1,3 +1,62 @@
+# =============================================================================
+# Claude Fix Agent
+# =============================================================================
+#
+# PURPOSE
+# -------
+# Semi-automated recovery for failed task workers. When a task agent fails
+# (timeout, code errors, conflict resolution failure), this workflow can be
+# triggered to pick up where it left off — using the existing branch and
+# error context to attempt a fix.
+#
+# HOW IT WORKS
+# ------------
+# 1. Triggered by an `@claude fix` comment on a non-meta issue.
+#    (The task worker excludes `@claude fix` from its own trigger.)
+# 2. Extracts context by reading all comments on the issue:
+#    - Base branch (from the orchestrator's original comment)
+#    - Existing branch (from the failed task worker's push)
+#    - Last failed run ID (for log reference)
+# 3. Checks out the existing branch if one was pushed, otherwise the base
+#    branch. This means the fix agent starts from whatever progress the
+#    task worker made before failing.
+# 4. Runs the Claude agent in interactive mode. The agent sees:
+#    - The original issue body (spec)
+#    - All comments including the failure notification and `@claude fix`
+#    - The existing code on the branch (partial implementation)
+# 5. After the agent finishes, creates a PR and merges — same post-step
+#    logic as the task worker.
+# 6. Posts a success/failure notification on both the task issue and the
+#    meta issue so the orchestrator can continue.
+#
+# WHEN TO USE
+# -----------
+# - Task worker timed out (60-minute limit hit mid-implementation)
+# - Task worker hit permission denials or tool errors
+# - Post-step conflict resolution failed
+# - Agent produced broken code that needs a targeted fix
+#
+# The failure notification step in claude-task.yml automatically suggests
+# `@claude fix` when a task fails, so the human just needs to comment it.
+#
+# NOTIFICATION
+# ------------
+# The fix agent ALWAYS posts a result comment (via `if: always()`):
+# - Success: "Fix agent succeeded" on the task issue
+# - Failure: "Fix agent also failed — manual intervention needed" on both
+#   the task issue and the meta issue
+# This ensures no failure goes silently unnoticed.
+#
+# TIMEOUT
+# -------
+# Same 60-minute limit as the task worker.
+#
+# `allowed_bots`
+# --------------
+# Set to `claude[bot]` so the fix can also be triggered by the meta
+# orchestrator or other automated comments, not just humans.
+# =============================================================================
+
 name: Claude Fix Agent
 
 permissions:
@@ -14,25 +73,31 @@ jobs:
   fix:
     runs-on: ubuntu-latest
     timeout-minutes: 60
+
+    # Only triggers on `@claude fix`, only on non-meta issues.
     if: >
       contains(github.event.comment.body, '@claude fix')
       && !contains(toJSON(github.event.issue.labels.*.name), 'meta')
+
     steps:
+      # --- Gather context from issue history ---
+      # Reads all comments to find the base branch, existing branch,
+      # and last failed run. This lets the fix agent start with full context.
       - name: Extract meta context
         id: meta
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ISSUE_NUM: ${{ github.event.issue.number }}
         run: |
-          # Find the meta issue this task belongs to by searching comments for "Base branch"
+          # Find base branch from orchestrator's comment
           COMMENTS=$(gh api "repos/${{ github.repository }}/issues/${ISSUE_NUM}/comments" --jq '.[].body')
           BASE_BRANCH=$(echo "$COMMENTS" | grep -oP 'Base branch: `\K[^`]+' | tail -1 || echo "main")
           META_NUM=$(echo "$BASE_BRANCH" | grep -oP '\d+' || echo "0")
 
-          # Find existing branch for this issue
+          # Find existing branch pushed by the failed task worker
           BRANCH=$(git ls-remote --heads origin "claude/*issue-${ISSUE_NUM}*" | awk '{print $2}' | sed 's|refs/heads/||' | sort | tail -1)
 
-          # Get the last failed run for this issue
+          # Get the last failed run ID for reference
           FAILED_RUN=$(gh run list --workflow=claude-task.yml --status=failure --limit=5 --json databaseId,createdAt \
             --jq 'sort_by(.createdAt) | reverse | .[0].databaseId' 2>/dev/null || echo "")
 
@@ -41,12 +106,18 @@ jobs:
           echo "existing_branch=$BRANCH" >> "$GITHUB_OUTPUT"
           echo "failed_run=$FAILED_RUN" >> "$GITHUB_OUTPUT"
 
+      # --- Checkout existing branch or base branch ---
+      # If the task worker pushed a partial branch, check that out so the
+      # fix agent continues from the existing progress.
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           ref: ${{ steps.meta.outputs.existing_branch || steps.meta.outputs.base_branch }}
           fetch-depth: 0
 
+      # --- Run the Claude fix agent ---
+      # Interactive mode: sees issue body + all comments (including failure
+      # context and the `@claude fix` trigger).
       - name: Run Claude Fix Agent
         uses: anthropics/claude-code-action@v1
         with:
@@ -56,6 +127,8 @@ jobs:
           base_branch: ${{ steps.meta.outputs.base_branch }}
           branch_prefix: "claude/${{ steps.meta.outputs.meta_number }}-"
 
+      # --- Auto-create PR and merge ---
+      # Same logic as the task worker post-step.
       - name: Auto-create PR and merge
         if: success()
         env:
@@ -63,7 +136,6 @@ jobs:
           ISSUE_NUM: ${{ github.event.issue.number }}
           BASE_BRANCH: ${{ steps.meta.outputs.base_branch }}
         run: |
-          # Find branch for this issue
           BRANCH=$(git ls-remote --heads origin "claude/*issue-${ISSUE_NUM}*" | awk '{print $2}' | sed 's|refs/heads/||' | sort | tail -1)
 
           if [ -z "$BRANCH" ]; then
@@ -101,6 +173,9 @@ jobs:
             gh pr merge "$PR_NUM" --merge
           fi
 
+      # --- Always notify the result ---
+      # Posts on the task issue AND the meta issue (on failure).
+      # Uses `if: always()` so notification happens even on failure.
       - name: Notify fix result
         if: always()
         env:
@@ -114,7 +189,6 @@ jobs:
             gh issue comment "$ISSUE_NUM" --body "✅ **Fix agent succeeded.** [View run](https://github.com/${{ github.repository }}/actions/runs/${RUN_ID})"
           else
             gh issue comment "$ISSUE_NUM" --body "❌ **Fix agent also failed.** [View run](https://github.com/${{ github.repository }}/actions/runs/${RUN_ID}) — Manual intervention may be needed."
-            # Notify meta issue
             if [ "$META_NUM" != "0" ]; then
               gh issue comment "$META_NUM" --body "❌ **Fix agent failed** on issue #${ISSUE_NUM}. [View run](https://github.com/${{ github.repository }}/actions/runs/${RUN_ID}) — Manual intervention needed."
             fi
