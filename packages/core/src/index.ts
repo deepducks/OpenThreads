@@ -17,7 +17,16 @@ export type {
 } from './types/envelope.js';
 
 // ---- A2H Protocol Types ----
-export type { A2HMessage, A2HIntent, A2HContext } from './types/a2h.js';
+export type {
+  A2HMessage,
+  A2HIntent,
+  A2HContext,
+  A2HInformIntent,
+  A2HAuthorizeIntent,
+  A2HCollectOption,
+  A2HCollectIntent,
+  A2HIntentMessage,
+} from './types/a2h.js';
 
 // ---- Message Union Types ----
 export type {
@@ -39,13 +48,22 @@ export type {
   CreateTokenInput,
 } from './interfaces/storage-adapter.js';
 
-// ---- Channel Adapter Interface ----
+// ---- Channel Adapter Interface & Adapter API Types ----
 export type {
   ChannelAdapter,
   ChannelCapabilities,
   ChannelConfig,
   RenderedMessage,
+  // Re-exported from adapter-api.ts via channel-adapter.ts
+  InboundEnvelope,
+  OutboundEnvelope,
+  SendResult,
+  A2HResponse,
+  MessageHandler,
+  A2HSendOptions,
 } from './interfaces/channel-adapter.js';
+
+export type { MessageItem } from './types/adapter-api.js';
 
 // ---- ID Generation Utilities ----
 export {

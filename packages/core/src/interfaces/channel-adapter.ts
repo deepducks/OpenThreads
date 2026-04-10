@@ -1,7 +1,14 @@
-import type { Thread } from '../types/thread.js';
-import type { Turn } from '../types/turn.js';
-import type { ChatSDKMessage } from '../types/message.js';
-import type { A2HMessage } from '../types/a2h.js';
+import type {
+  InboundEnvelope,
+  OutboundEnvelope,
+  SendResult,
+  A2HResponse,
+  MessageHandler,
+  A2HSendOptions,
+} from '../types/adapter-api.js';
+import type { A2HIntentMessage } from '../types/a2h.js';
+
+export type { InboundEnvelope, OutboundEnvelope, SendResult, A2HResponse, MessageHandler, A2HSendOptions };
 
 /**
  * Platform capability flags. Adapters report what their platform supports
@@ -43,76 +50,83 @@ export type RenderedMessage = unknown;
  * Abstract channel adapter interface.
  *
  * Each supported platform (Slack, Discord, Telegram, etc.) implements this interface.
- * Native Vercel Chat SDK adapters live in `packages/core`; custom adapters
- * (e.g., WhatsApp via Baileys) live in `packages/channels/`.
+ *
+ * Lifecycle:
+ *   1. Construct the adapter with platform credentials.
+ *   2. Register a message handler via `onMessage()`.
+ *   3. Call `initialize()` to start listening for events (webhook / socket mode).
+ *   4. Use `send()` / `sendA2H()` to deliver messages and A2H intents to humans.
+ *   5. Call `shutdown()` to stop the adapter gracefully.
  *
  * @example
  * ```ts
  * import type { ChannelAdapter } from '@openthreads/core';
  *
- * export class SlackAdapter implements ChannelAdapter {
+ * export class TelegramAdapter implements ChannelAdapter {
+ *   readonly channelType = 'telegram';
+ *   readonly capabilities: ChannelCapabilities = { ... };
  *   // ...
  * }
  * ```
  */
 export interface ChannelAdapter {
   /**
-   * Set up the adapter — register webhooks, subscribe to events, initialise the
-   * platform SDK client. Called once when a channel is registered in OpenThreads.
+   * Platform identifier string (e.g., "slack", "telegram", "discord").
    */
-  register(config: ChannelConfig): Promise<void>;
+  readonly channelType: string;
 
   /**
-   * Send a rendered message to a target within the channel.
-   *
-   * @param target  Platform-native target identifier (channel ID, group ID, user ID, etc.)
-   * @param message A single message or array of messages (Chat SDK or A2H)
+   * Platform capability flags, used by the Reply Engine to decide the
+   * best rendering method for each A2H intent.
    */
-  sendMessage(
-    target: string,
-    message: ChatSDKMessage | A2HMessage | (ChatSDKMessage | A2HMessage)[],
-  ): Promise<void>;
+  readonly capabilities: ChannelCapabilities;
 
   /**
-   * Adapt a Chat SDK message to the platform's native format.
-   * Used by the Reply Engine when rendering conventional text/media replies.
-   *
-   * @param message      The Chat SDK message to render
-   * @param capabilities The platform's capability flags
-   * @returns            A platform-native payload (Slack blocks, Telegram object, etc.)
+   * Start the adapter — register webhooks, connect to Socket Mode, begin polling,
+   * or perform any other startup needed to receive events.
    */
-  renderChatSDK(message: ChatSDKMessage, capabilities: ChannelCapabilities): Promise<RenderedMessage>;
+  initialize(): Promise<void>;
 
   /**
-   * Render an A2H intent as an inline interactive element in the channel
-   * (buttons for AUTHORIZE approve/deny, select menus for COLLECT with closed options).
-   * Only called when the Reply Engine selects method 1 (inline rendering).
-   *
-   * @param intent       The A2H message to render inline
-   * @param capabilities The platform's capability flags
-   * @returns            A platform-native interactive component payload
+   * Stop the adapter gracefully — disconnect from webhooks/sockets, flush pending
+   * state, release resources.
    */
-  renderA2HInline(intent: A2HMessage, capabilities: ChannelCapabilities): Promise<RenderedMessage>;
+  shutdown(): Promise<void>;
 
   /**
-   * Listen for the human's response to a specific turn in a thread.
-   * Used by the Reply Engine for method 2 (text capture via thread, reply, or DM).
-   *
-   * Implementations should resolve the promise when the response is received,
-   * following the capture hierarchy:
-   *   1. Native thread reply
-   *   2. Native reply-to-message
-   *   3. DM implicit context (next message from sender)
-   *
-   * @param thread The thread to listen on
-   * @param turn   The turn awaiting a response
-   * @returns      The captured response message
+   * Register a handler that is called whenever a new inbound message arrives from
+   * a human via this channel. Only one handler is active at a time; calling
+   * `onMessage()` again replaces the previous handler.
    */
-  captureResponse(thread: Thread, turn: Turn): Promise<ChatSDKMessage>;
+  onMessage(handler: MessageHandler): void;
 
   /**
-   * Return the platform's capability flags.
-   * Called by the Reply Engine to determine how to render A2H intents.
+   * Send a message envelope to a target in the channel.
+   * Processes the `message` field sequentially (text messages, INFORM intents).
+   * Blocking A2H intents (AUTHORIZE, COLLECT) should use `sendA2H()` instead.
+   *
+   * @param envelope  The outbound envelope carrying target info and message payload.
+   * @returns         Metadata about the sent message (ID, thread ID).
    */
-  capabilities(): ChannelCapabilities;
+  send(envelope: OutboundEnvelope): Promise<SendResult>;
+
+  /**
+   * Send an A2H intent to a channel and block until the human responds.
+   *
+   * - INFORM: fire-and-forget, resolves immediately after sending.
+   * - AUTHORIZE: renders approve/deny UI; resolves when the human clicks.
+   * - COLLECT: renders selection or captures free-text; resolves with human's response.
+   *
+   * @param channelId  Platform-native chat/channel ID.
+   * @param threadId   Platform-native thread/message ID to reply within (optional).
+   * @param intent     The A2H intent message to render.
+   * @param options    Timeout and other send options.
+   * @returns          The human's response, including intentId and type.
+   */
+  sendA2H(
+    channelId: string,
+    threadId: string | undefined,
+    intent: A2HIntentMessage,
+    options?: A2HSendOptions,
+  ): Promise<A2HResponse>;
 }
