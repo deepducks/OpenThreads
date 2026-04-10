@@ -1,220 +1,189 @@
 /**
- * Core types and interfaces for OpenThreads.
- *
- * The message envelope accepts both Vercel Chat SDK messages and A2H protocol
- * intents, identified by duck typing: presence of `intent` field = A2H.
+ * Core types for OpenThreads token, thread, and turn management.
  */
 
 // ---------------------------------------------------------------------------
-// Chat SDK Types (Vercel Chat SDK format)
+// Token types
 // ---------------------------------------------------------------------------
 
-export interface Attachment {
-  url?: string;
-  contentType?: string;
-  name?: string;
+/** An ephemeral token issued alongside a replyTo URL, scoped to a specific thread. */
+export interface TokenRecord {
+  /** Token identifier with `ot_tk_` prefix. */
+  id: string;
+  /** The channel this token is scoped to. */
+  channelId: string;
+  /** The target (group or user) this token is scoped to. */
+  targetId: string;
+  /** The thread this token is scoped to. */
+  threadId: string;
+  /** Absolute expiry date. After this the token is considered invalid. */
+  expiresAt: Date;
+  /** When the token was explicitly revoked. If set, token is invalid. */
+  revokedAt?: Date;
+  createdAt: Date;
 }
 
-export interface ChatSDKMessage {
-  text?: string;
-  markdown?: string;
-  attachments?: Attachment[];
-  blocks?: unknown[];
-  [key: string]: unknown;
+/** A channel-scoped API key for direct sending outside a replyTo context. */
+export interface ChannelApiKeyRecord {
+  /** Key identifier with `ot_ch_sk_` prefix. */
+  id: string;
+  /** The channel this key grants access to. */
+  channelId: string;
+  /** When the key was explicitly revoked. If set, key is invalid. */
+  revokedAt?: Date;
+  createdAt: Date;
+}
+
+export type TokenValidationResult =
+  | { valid: true; token: TokenRecord }
+  | { valid: false; reason: 'not_found' | 'expired' | 'revoked'; token?: TokenRecord };
+
+export type ChannelApiKeyValidationResult =
+  | { valid: true; key: ChannelApiKeyRecord }
+  | { valid: false; reason: 'not_found' | 'revoked' | 'channel_mismatch'; key?: ChannelApiKeyRecord };
+
+// ---------------------------------------------------------------------------
+// Thread types
+// ---------------------------------------------------------------------------
+
+export type ThreadKind =
+  /** 1:1 mapping with the platform's native thread (Slack thread, Discord forum post). */
+  | 'native'
+  /** Virtual thread built from a reply chain when the platform has no native threads. */
+  | 'virtual'
+  /** The implicit "main" thread that catches all messages outside explicit threads. */
+  | 'main';
+
+/** A conversation thread managed by OpenThreads. */
+export interface ThreadRecord {
+  /** Thread identifier with `ot_thr_` prefix. */
+  id: string;
+  /** The channel this thread lives in. */
+  channelId: string;
+  /** Target (group ID, user ID, channel name) within the channel. */
+  targetId?: string;
+  /** Platform-native thread identifier, when the channel has native thread support. */
+  nativeThreadId?: string;
+  /** How this thread was created. */
+  kind: ThreadKind;
+  /**
+   * For virtual threads: the ordered list of native message IDs that form the
+   * reply chain. The first element is the root message.
+   */
+  replyChain?: string[];
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface CreateThreadOptions {
+  channelId: string;
+  targetId?: string;
+  /** Provide when the platform has native thread support. */
+  nativeThreadId?: string;
+}
+
+export interface CreateVirtualThreadOptions {
+  channelId: string;
+  targetId?: string;
+  /**
+   * Ordered list of native message IDs that form the reply chain.
+   * Must have at least one element (the root message).
+   */
+  replyChain: [string, ...string[]];
 }
 
 // ---------------------------------------------------------------------------
-// A2H Protocol Types
+// Turn types
 // ---------------------------------------------------------------------------
 
-/** The five atomic A2H intents from Layer 1 of the A2H spec. */
-export type A2HIntent = 'INFORM' | 'COLLECT' | 'AUTHORIZE' | 'ESCALATE' | 'RESULT';
+export type TurnDirection = 'inbound' | 'outbound';
 
-/** A field within a COLLECT intent. */
-export interface CollectField {
-  name: string;
-  /** Closed option types can be rendered as buttons/selects in the channel. */
-  type: 'text' | 'textarea' | 'select' | 'multiselect' | 'checkbox' | 'date' | 'number';
-  label?: string;
-  /** Options for select/multiselect/checkbox types — makes this a "closed option" field. */
-  options?: string[];
-  required?: boolean;
+/** A single sender-message → recipient-response cycle within a thread. */
+export interface TurnRecord {
+  /** Turn identifier with `ot_turn_` prefix. */
+  id: string;
+  /** The thread this turn belongs to. */
+  threadId: string;
+  /**
+   * `inbound`  — message received from a sender (human → OpenThreads).
+   * `outbound` — message sent to a recipient (OpenThreads → external system / channel).
+   */
+  direction: TurnDirection;
+  /** Raw message payload (Chat SDK object, A2H intent, or arbitrary JSON). */
+  message: unknown;
+  /** Identifier of the human sender (when direction = 'inbound'). */
+  senderId?: string;
+  /** Identifier of the external recipient (when direction = 'outbound'). */
+  recipientId?: string;
+  createdAt: Date;
 }
 
-/** A2H message following the A2H protocol spec (presence of `intent` = A2H). */
-export interface A2HMessage {
-  intent: A2HIntent;
-  context?: {
-    action?: string;
-    details?: string;
-    justification?: string;
-    evidence?: unknown;
-    [key: string]: unknown;
-  };
-  /** COLLECT-specific: defines the fields to collect and/or a question prompt. */
-  collect?: {
-    question?: string;
-    fields?: CollectField[];
-  };
-  /** Trace ID for auditing and idempotency. */
-  traceId?: string;
-  nonce?: string;
+export interface CreateTurnOptions {
+  threadId: string;
+  direction: TurnDirection;
+  message: unknown;
+  senderId?: string;
+  recipientId?: string;
 }
-
-/** Discriminated union of all valid message item types in the envelope. */
-export type MessageItem = ChatSDKMessage | A2HMessage;
 
 // ---------------------------------------------------------------------------
-// Channel Capabilities
+// Storage adapter interface
 // ---------------------------------------------------------------------------
 
 /**
- * Describes what the destination channel can render natively.
- * The Reply Engine uses this to select the best reply method.
+ * Abstract persistence interface.  All token, thread, and turn managers depend
+ * on this interface — swap the concrete implementation (MongoDB, Postgres, …)
+ * without touching business logic.
  */
-export interface ChannelCapabilities {
-  /** Channel supports interactive button components (Slack, Discord, Telegram). */
-  supportsButtons: boolean;
-  /** Channel supports select/dropdown menus (Slack block kit selects, etc.). */
-  supportsSelectMenus: boolean;
-  /** Channel supports native message threads (Slack threads, Discord forum channels). */
-  supportsNativeThreads: boolean;
-  /** Channel supports replying to a specific message (Telegram reply, WhatsApp quote). */
-  supportsNativeReplies: boolean;
-  /** The current context is a Direct Message (implies implicit capture for method 2). */
-  isDM: boolean;
-}
+export interface StorageAdapter {
+  // ------ Token operations -----------------------------------------------
 
-// ---------------------------------------------------------------------------
-// Reply Method
-// ---------------------------------------------------------------------------
+  /** Persist or update a token record. */
+  saveToken(token: TokenRecord): Promise<void>;
+  /** Look up a token by its ID. Returns `null` when not found. */
+  getToken(tokenId: string): Promise<TokenRecord | null>;
+  /** Permanently delete a token record. */
+  deleteToken(tokenId: string): Promise<void>;
 
-/**
- * The four reply methods the Reply Engine can use for A2H intents.
- *
- * 1 — Inline in channel (buttons/actions)
- * 2 — Text capture (thread, reply, or DM)
- * 3 — External form (temporary link)
- * 4 — Batch form (multiple intents on a single page)
- */
-export type ReplyMethod = 1 | 2 | 3 | 4;
+  // ------ Channel API key operations -------------------------------------
 
-/** How method 2 captures the response from the human. */
-export type CaptureMethod = 'thread' | 'reply' | 'dm' | 'none';
+  /** Persist or update a channel API key record. */
+  saveChannelApiKey(key: ChannelApiKeyRecord): Promise<void>;
+  /** Look up a channel API key by its ID. Returns `null` when not found. */
+  getChannelApiKey(keyId: string): Promise<ChannelApiKeyRecord | null>;
+  /** Permanently delete a channel API key record. */
+  deleteChannelApiKey(keyId: string): Promise<void>;
 
-// ---------------------------------------------------------------------------
-// A2H Response
-// ---------------------------------------------------------------------------
+  // ------ Thread operations ----------------------------------------------
 
-/** The response collected from the human for a single A2H intent. */
-export interface A2HResponse {
-  intent: A2HIntent;
-  /** The human's response payload (approval boolean, text string, selected option, etc.). */
-  response: unknown;
-  respondedAt?: Date;
-}
-
-// ---------------------------------------------------------------------------
-// Channel Adapter Interface
-// ---------------------------------------------------------------------------
-
-/**
- * The channel adapter interface that the Reply Engine delegates to.
- *
- * Concrete implementations live in packages/channels/ or are provided by the
- * Vercel Chat SDK adapters in packages/core.
- */
-export interface ChannelAdapter {
-  /** Capabilities of the underlying channel. */
-  readonly capabilities: ChannelCapabilities;
-
+  /** Persist or update a thread record. */
+  saveThread(thread: ThreadRecord): Promise<void>;
+  /** Look up a thread by its OpenThreads ID. Returns `null` when not found. */
+  getThread(threadId: string): Promise<ThreadRecord | null>;
   /**
-   * Render a Chat SDK message to the channel (fire-and-forget).
-   * Used for text, markdown, blocks, etc.
+   * Look up a thread by the platform's native thread ID within a channel.
+   * Returns `null` when not found.
    */
-  renderChatSDK(message: ChatSDKMessage): Promise<void>;
-
+  getThreadByNativeId(channelId: string, nativeThreadId: string): Promise<ThreadRecord | null>;
   /**
-   * Render an A2H intent inline using native channel primitives (method 1).
-   * Returns the human's response once they interact with the buttons/select.
+   * Look up the "main" thread for a (channel, target) pair.
+   * Returns `null` when not found.
    */
-  renderA2HInline(message: A2HMessage): Promise<A2HResponse>;
-
+  getMainThread(channelId: string, targetId: string): Promise<ThreadRecord | null>;
   /**
-   * Capture a free-text response via the channel's native affordances (method 2).
-   * The capture method depends on channel capabilities:
-   *   'thread'  — capture any sender message in the native thread
-   *   'reply'   — capture a direct reply to the COLLECT message
-   *   'dm'      — capture next message in the DM (implicit context)
-   *   'none'    — channel doesn't support capture (should not be passed here)
+   * Look up threads by channel + target.
+   * Returns an empty array when none are found.
    */
-  captureResponse(message: A2HMessage, captureMethod: Exclude<CaptureMethod, 'none'>): Promise<A2HResponse>;
+  getThreadsByChannelAndTarget(channelId: string, targetId: string): Promise<ThreadRecord[]>;
 
+  // ------ Turn operations ------------------------------------------------
+
+  /** Persist or update a turn record. */
+  saveTurn(turn: TurnRecord): Promise<void>;
+  /** Look up a turn by its ID. Returns `null` when not found. */
+  getTurn(turnId: string): Promise<TurnRecord | null>;
   /**
-   * Send a form link to the channel (methods 3 and 4).
-   * The link points to the auto-generated A2H form page.
+   * Return all turns for a thread in chronological order (oldest first).
    */
-  sendFormLink(formUrl: string, context: A2HMessage | A2HMessage[]): Promise<void>;
-}
-
-// ---------------------------------------------------------------------------
-// Escalation Handler
-// ---------------------------------------------------------------------------
-
-/**
- * Optional hook for handling ESCALATE intents.
- * When provided, the Reply Engine calls this instead of falling back to method 3.
- */
-export interface EscalationHandler {
-  handle(message: A2HMessage): Promise<A2HResponse>;
-}
-
-// ---------------------------------------------------------------------------
-// Reply Engine Config & Result
-// ---------------------------------------------------------------------------
-
-export interface ReplyEngineConfig {
-  /**
-   * Timeout in milliseconds for blocking A2H intents (COLLECT, AUTHORIZE, ESCALATE).
-   * @default 300000 (5 minutes)
-   */
-  timeoutMs?: number;
-
-  /**
-   * When true, all A2H intents are routed to method 3 (external form) because
-   * strong authentication (WebAuthn/passkeys) is only supported there.
-   * @default false
-   */
-  trustLayerActive?: boolean;
-
-  /**
-   * Base URL for auto-generated A2H form pages.
-   * Form URLs are constructed as `${formBaseUrl}/${turnId}`.
-   * @default "https://openthreads.host/form"
-   */
-  formBaseUrl?: string;
-
-  /**
-   * Optional handler for ESCALATE intents.
-   * Falls back to method 3 (external form) when not provided.
-   */
-  escalationHandler?: EscalationHandler;
-}
-
-/** The result returned by the Reply Engine after processing an envelope. */
-export interface ReplyEngineResult {
-  /**
-   * Responses collected for each item in the message array, in the same order.
-   * null for Chat SDK messages and INFORM intents (non-blocking / fire-and-forget).
-   */
-  responses: (A2HResponse | null)[];
-}
-
-/** The inbound envelope POSTed to the recipient inbound endpoint. */
-export interface ReplyEnvelope {
-  /**
-   * A single message object or an array. When a single object, it is normalized
-   * to a 1-item array. Each item is either a Chat SDK message or an A2H intent.
-   */
-  message: MessageItem | MessageItem[];
+  listTurnsByThread(threadId: string): Promise<TurnRecord[]>;
 }
