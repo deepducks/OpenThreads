@@ -1,0 +1,27 @@
+{
+  "name": "@openthreads/channels-slack",
+  "version": "0.1.0",
+  "type": "module",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsc --project tsconfig.json",
+    "typecheck": "tsc --project tsconfig.json --noEmit",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@openthreads/core": "workspace:*",
+    "@slack/bolt": "^3.21.0",
+    "@slack/web-api": "^7.3.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.0",
+    "@types/node": "^20.0.0"
+  }
+}
