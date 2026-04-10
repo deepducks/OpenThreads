@@ -440,6 +440,59 @@ export async function updateFormRecord(
   return result as FormRecord | null;
 }
 
+// ─── Audit Log ────────────────────────────────────────────────────────────────
+
+export interface AuditLogDoc {
+  id: string;
+  eventType: string;
+  turnId: string;
+  threadId?: string;
+  channelId?: string;
+  actorId?: string;
+  channelMetadata?: Record<string, unknown>;
+  intentType?: string;
+  traceId?: string;
+  nonce?: string;
+  timestamp: Date;
+  payload?: unknown;
+}
+
+export async function saveAuditEntry(entry: AuditLogDoc): Promise<void> {
+  const coll = await col<AuditLogDoc>('audit_log');
+  await coll.insertOne(entry as unknown as AuditLogDoc & { _id?: unknown });
+}
+
+export async function queryAuditLog(filter: {
+  turnId?: string;
+  threadId?: string;
+  channelId?: string;
+  eventType?: string;
+  fromDate?: Date;
+  toDate?: Date;
+  limit?: number;
+  offset?: number;
+}): Promise<AuditLogDoc[]> {
+  const coll = await col<AuditLogDoc>('audit_log');
+  const query: Record<string, unknown> = {};
+
+  if (filter.turnId) query['turnId'] = filter.turnId;
+  if (filter.threadId) query['threadId'] = filter.threadId;
+  if (filter.channelId) query['channelId'] = filter.channelId;
+  if (filter.eventType) query['eventType'] = filter.eventType;
+  if (filter.fromDate || filter.toDate) {
+    const tsFilter: Record<string, Date> = {};
+    if (filter.fromDate) tsFilter['$gte'] = filter.fromDate;
+    if (filter.toDate) tsFilter['$lte'] = filter.toDate;
+    query['timestamp'] = tsFilter;
+  }
+
+  let cursor = coll.find(query as Filter<AuditLogDoc>).sort({ timestamp: -1 });
+  if (filter.offset) cursor = cursor.skip(filter.offset);
+  cursor = cursor.limit(filter.limit ?? 100);
+
+  return (await cursor.toArray()) as AuditLogDoc[];
+}
+
 // ─── Ensure indexes ───────────────────────────────────────────────────────────
 
 export async function ensureIndexes(): Promise<void> {
@@ -474,6 +527,13 @@ export async function ensureIndexes(): Promise<void> {
       { key: { formKey: 1 }, unique: true, name: 'forms_formKey_unique' },
       { key: { turnId: 1 }, name: 'forms_turnId' },
       { key: { expiresAt: 1 }, expireAfterSeconds: 0, name: 'forms_expiresAt_ttl' },
+    ]),
+    db.collection('audit_log').createIndexes([
+      { key: { id: 1 }, unique: true, name: 'audit_log_id_unique' },
+      { key: { turnId: 1, timestamp: -1 }, name: 'audit_log_turnId_timestamp' },
+      { key: { threadId: 1 }, sparse: true, name: 'audit_log_threadId' },
+      { key: { eventType: 1, timestamp: -1 }, name: 'audit_log_eventType_timestamp' },
+      { key: { timestamp: -1 }, name: 'audit_log_timestamp' },
     ]),
   ]);
 }
