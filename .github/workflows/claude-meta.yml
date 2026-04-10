@@ -1,0 +1,73 @@
+name: Claude Meta Orchestrator
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+  id-token: write
+
+on:
+  pull_request:
+    types: [closed]
+  issue_comment:
+    types: [created]
+
+jobs:
+  orchestrate:
+    runs-on: ubuntu-latest
+    if: >
+      (github.event_name == 'pull_request'
+        && github.event.pull_request.merged == true
+        && startsWith(github.event.pull_request.base.ref, 'meta/'))
+      || (github.event_name == 'issue_comment'
+          && contains(github.event.comment.body, '@claude')
+          && contains(toJSON(github.event.issue.labels.*.name), 'meta'))
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Run Claude Meta Orchestrator
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          claude_args: "--model claude-sonnet"
+          prompt: |
+            You are an orchestrator agent for a multi-issue implementation plan.
+
+            ## Determine which meta issue to work on
+
+            - If triggered by a PR merge: the PR's base branch is `meta/<N>`. The meta issue is #N.
+            - If triggered by a comment: the comment is on the meta issue itself. Use that issue number.
+
+            ## Your job
+
+            1. Read the meta issue body. It contains:
+               - A dependency graph
+               - A wave-based execution order with checkboxes (`- [ ] #N ...` or `- [x] #N ...`)
+
+            2. Ensure the meta branch exists:
+               - Check if branch `meta/<N>` exists: `git ls-remote --heads origin meta/<N>`
+               - If not, create it from main: `git checkout main && git pull && git checkout -b meta/<N> && git push -u origin meta/<N>`
+
+            3. For each unchecked issue in the list, check if it has a merged PR targeting `meta/<N>`:
+               - `gh pr list --state merged --base meta/<N> --search "fixes #<issue>"`
+               - If found, update the meta issue body to check that box (`- [x]`)
+
+            4. Identify the next unchecked issues whose ALL dependencies are checked (done).
+
+            5. For each ready issue:
+               a. Comment on it with:
+                  ```
+                  @claude Implement this issue.
+                  - Base branch: `meta/<N>`
+                  - Create your working branch as: `claude/<N>-<issue_number>-<short_slug>`
+                  - Target your PR to `meta/<N>`
+                  - Include `fixes #<issue_number>` in the PR body
+                  ```
+               b. If the issue has label `priority:P0`, add to the comment: "Enable auto-merge on the PR."
+
+            6. Comment on the meta issue summarizing: which issues were marked done, which were assigned, what's next.
+
+            7. If ALL issues are checked, open a final PR: `meta/<N>` → `main` with a summary of everything implemented.
+
+            8. If no issues are ready (all done or all blocked), say so on the meta issue.
