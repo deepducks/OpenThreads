@@ -17,8 +17,21 @@ jobs:
       contains(github.event.comment.body, '@claude')
       && !contains(toJSON(github.event.issue.labels.*.name), 'meta')
     steps:
+      - name: Extract meta context from comment
+        id: meta
+        env:
+          COMMENT_BODY: ${{ github.event.comment.body }}
+        run: |
+          BASE_BRANCH=$(echo "$COMMENT_BODY" | grep -oP 'Base branch: `\K[^`]+' || echo "main")
+          META_NUM=$(echo "$BASE_BRANCH" | grep -oP '\d+' || echo "0")
+          echo "base_branch=$BASE_BRANCH" >> "$GITHUB_OUTPUT"
+          echo "meta_number=$META_NUM" >> "$GITHUB_OUTPUT"
+
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.meta.outputs.base_branch }}
+          fetch-depth: 0
 
       - name: Run Claude Task Worker
         uses: anthropics/claude-code-action@v1
@@ -26,3 +39,68 @@ jobs:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           claude_args: "--model claude-sonnet-4-6"
           allowed_bots: "claude[bot]"
+          base_branch: ${{ steps.meta.outputs.base_branch }}
+          branch_prefix: "claude/${{ steps.meta.outputs.meta_number }}-"
+
+      - name: Auto-create PR and merge
+        if: success()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE_NUM: ${{ github.event.issue.number }}
+          BASE_BRANCH: ${{ steps.meta.outputs.base_branch }}
+        run: |
+          # Find branch pushed by claude action for this issue
+          BRANCH=$(git ls-remote --heads origin "claude/*-issue-${ISSUE_NUM}-*" | awk '{print $2}' | sed 's|refs/heads/||' | sort | tail -1)
+
+          # Fallback: try older naming pattern
+          if [ -z "$BRANCH" ]; then
+            BRANCH=$(git ls-remote --heads origin "claude/*/issue-${ISSUE_NUM}-*" | awk '{print $2}' | sed 's|refs/heads/||' | sort | tail -1)
+          fi
+          if [ -z "$BRANCH" ]; then
+            BRANCH=$(git ls-remote --heads origin "claude/*issue-${ISSUE_NUM}*" | awk '{print $2}' | sed 's|refs/heads/||' | sort | tail -1)
+          fi
+
+          if [ -z "$BRANCH" ]; then
+            echo "No branch found for issue #${ISSUE_NUM}, skipping PR creation"
+            exit 0
+          fi
+
+          echo "Found branch: $BRANCH"
+
+          # Check if PR already exists
+          EXISTING=$(gh pr list --head "$BRANCH" --base "$BASE_BRANCH" --json number --jq 'length' 2>/dev/null || echo "0")
+          if [ "$EXISTING" -gt 0 ]; then
+            echo "PR already exists for $BRANCH"
+            exit 0
+          fi
+
+          # Create PR
+          TITLE=$(gh issue view "$ISSUE_NUM" --json title --jq '.title')
+          PR_URL=$(gh pr create --base "$BASE_BRANCH" --head "$BRANCH" --title "$TITLE" --body "fixes #${ISSUE_NUM}")
+          PR_NUM=$(echo "$PR_URL" | grep -oP '\d+$')
+          echo "Created PR #$PR_NUM"
+
+          # Try to merge directly
+          if gh pr merge "$PR_NUM" --merge 2>/dev/null; then
+            echo "PR #$PR_NUM merged successfully"
+            exit 0
+          fi
+
+          echo "Direct merge failed, resolving conflicts..."
+
+          # Resolve conflicts: rebase onto base branch
+          git fetch origin "$BRANCH" "$BASE_BRANCH"
+          git checkout "$BRANCH"
+          if git rebase "origin/$BASE_BRANCH"; then
+            git push --force-with-lease origin "$BRANCH"
+            echo "Rebased successfully, merging..."
+            gh pr merge "$PR_NUM" --merge
+          else
+            git rebase --abort
+            # Fallback: merge with theirs strategy
+            git merge "origin/$BASE_BRANCH" -X theirs -m "Merge $BASE_BRANCH to resolve conflicts"
+            git push origin "$BRANCH"
+            gh pr merge "$PR_NUM" --merge
+          fi
+
+          echo "PR #$PR_NUM merged after conflict resolution"
