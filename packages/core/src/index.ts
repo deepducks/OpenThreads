@@ -1,3 +1,9 @@
+/**
+ * @openthreads/core
+ *
+ * Core abstractions for OpenThreads.
+ */
+
 // ---- Data Model Types ----
 export type { Channel, CreateChannelInput, Platform } from './types/channel.js';
 export type { Recipient, CreateRecipientInput } from './types/recipient.js';
@@ -63,3 +69,33 @@ export {
   hasA2HMessages,
   hasChatSDKMessages,
 } from './utils/message-classifier.js';
+
+// ---- Token Management (Issue #5) ----
+export type {
+  TokenRecord,
+  ChannelApiKeyRecord,
+  TokenValidationResult,
+  ChannelApiKeyValidationResult,
+  ThreadRecord,
+  ThreadKind,
+  CreateThreadOptions,
+  CreateVirtualThreadOptions,
+  TurnRecord,
+  CreateTurnOptions,
+} from './types/index.js';
+
+export {
+  generateTokenId as generateEphemeralTokenId,
+  generateChannelApiKeyId,
+} from './utils/id.js';
+
+export { InMemoryStorageAdapter } from './storage/in-memory.js';
+
+export { TokenManager, DEFAULT_TOKEN_TTL_MS } from './token/index.js';
+export type { TokenManagerOptions, GenerateEphemeralTokenOptions } from './token/index.js';
+
+export { ThreadManager } from './thread/index.js';
+export type { ThreadManagerOptions } from './thread/index.js';
+
+export { TurnManager } from './turn/index.js';
+export type { TurnManagerOptions } from './turn/index.js';
