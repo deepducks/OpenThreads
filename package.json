@@ -1,0 +1,7 @@
+{
+  "name": "openthreads",
+  "private": true,
+  "workspaces": [
+    "packages/*"
+  ]
+}
