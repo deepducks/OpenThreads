@@ -1,9 +1,9 @@
 /**
- * GET /api/threads — List threads, filterable by channelId and targetId
+ * GET /api/threads — List threads, optionally filtered by channelId, targetId, and search
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { listThreadsByChannel } from '@/lib/db';
+import { listThreads } from '@/lib/db';
 import { verifyManagementAuth } from '@/lib/auth';
 
 export const runtime = 'nodejs';
@@ -14,18 +14,14 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  const channelId = request.nextUrl.searchParams.get('channelId');
+  const channelId = request.nextUrl.searchParams.get('channelId') ?? undefined;
   const targetId = request.nextUrl.searchParams.get('targetId') ?? undefined;
-
-  if (!channelId) {
-    return NextResponse.json(
-      { error: 'Missing required query param: channelId' },
-      { status: 400 },
-    );
-  }
+  const search = request.nextUrl.searchParams.get('search') ?? undefined;
+  const limitParam = request.nextUrl.searchParams.get('limit');
+  const limit = limitParam ? Math.min(parseInt(limitParam, 10), 200) : 100;
 
   try {
-    const threads = await listThreadsByChannel(channelId, targetId);
+    const threads = await listThreads({ channelId, targetId, search, limit });
     return NextResponse.json({ threads });
   } catch (err) {
     console.error('[threads] list error:', err);

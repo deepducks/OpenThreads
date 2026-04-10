@@ -204,6 +204,30 @@ export async function listThreadsByChannel(
   return (await coll.find(query as Filter<Thread>).sort({ createdAt: -1 }).toArray()) as Thread[];
 }
 
+export async function listThreads(options?: {
+  channelId?: string;
+  targetId?: string;
+  search?: string;
+  limit?: number;
+  skip?: number;
+}): Promise<Thread[]> {
+  const coll = await col<Thread>('threads');
+  const query: Record<string, unknown> = {};
+  if (options?.channelId) query['channelId'] = options.channelId;
+  if (options?.targetId) query['targetId'] = options.targetId;
+  if (options?.search) {
+    query['$or'] = [
+      { threadId: { $regex: options.search, $options: 'i' } },
+      { targetId: { $regex: options.search, $options: 'i' } },
+      { channelId: { $regex: options.search, $options: 'i' } },
+    ];
+  }
+  let cursor = coll.find(query as Filter<Thread>).sort({ createdAt: -1 });
+  if (options?.skip) cursor = cursor.skip(options.skip);
+  if (options?.limit) cursor = cursor.limit(options.limit);
+  return (await cursor.toArray()) as Thread[];
+}
+
 // ─── Turns ────────────────────────────────────────────────────────────────────
 
 export async function createTurn(input: CreateTurnInput): Promise<Turn> {
@@ -360,6 +384,50 @@ export async function consumeToken(value: string): Promise<boolean> {
     { $set: { used: true } } as UpdateFilter<TokenDoc>,
   );
   return result.modifiedCount === 1;
+}
+
+// ─── Settings ─────────────────────────────────────────────────────────────────
+
+export interface ChannelOverride {
+  tokenTtlSeconds?: number;
+  trustLayerEnabled?: boolean;
+}
+
+export interface AppSettings {
+  tokenTtlSeconds: number;
+  trustLayerEnabled: boolean;
+  perChannelOverrides: Record<string, ChannelOverride>;
+}
+
+export const DEFAULT_SETTINGS: AppSettings = {
+  tokenTtlSeconds: 86400,
+  trustLayerEnabled: false,
+  perChannelOverrides: {},
+};
+
+interface SettingsDoc extends AppSettings {
+  name: string;
+}
+
+export async function getSettings(): Promise<AppSettings> {
+  const coll = await col<SettingsDoc>('settings');
+  const doc = await coll.findOne({ name: 'global' } as Filter<SettingsDoc>);
+  if (!doc) return { ...DEFAULT_SETTINGS };
+  return {
+    tokenTtlSeconds: doc.tokenTtlSeconds ?? DEFAULT_SETTINGS.tokenTtlSeconds,
+    trustLayerEnabled: doc.trustLayerEnabled ?? DEFAULT_SETTINGS.trustLayerEnabled,
+    perChannelOverrides: doc.perChannelOverrides ?? {},
+  };
+}
+
+export async function updateSettings(updates: Partial<AppSettings>): Promise<AppSettings> {
+  const coll = await col<SettingsDoc>('settings');
+  await coll.updateOne(
+    { name: 'global' } as Filter<SettingsDoc>,
+    { $set: updates, $setOnInsert: { name: 'global' } } as UpdateFilter<SettingsDoc>,
+    { upsert: true },
+  );
+  return getSettings();
 }
 
 // ─── Ensure indexes ───────────────────────────────────────────────────────────

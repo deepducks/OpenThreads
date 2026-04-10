@@ -9,8 +9,12 @@
     "test": "bun test"
   },
   "dependencies": {
+    "@ant-design/icons": "^5.6.0",
+    "@ant-design/nextjs-registry": "^1.0.1",
     "@openthreads/core": "workspace:*",
     "@openthreads/storage-mongodb": "workspace:*",
+    "@xyflow/react": "^12.4.4",
+    "antd": "^5.24.6",
     "mongodb": "^6.0.0",
     "next": "^15.0.0",
     "react": "^19.0.0",
