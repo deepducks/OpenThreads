@@ -1,0 +1,28 @@
+version: '3.8'
+
+# Development Docker Compose for OpenThreads.
+# Spins up MongoDB with a persistent volume for local development.
+#
+# Usage:
+#   docker compose up -d       # Start MongoDB in background
+#   docker compose down        # Stop and remove containers
+#   docker compose down -v     # Stop and remove containers + volumes
+
+services:
+  mongodb:
+    image: mongo:7
+    ports:
+      - '27017:27017'
+    environment:
+      MONGO_INITDB_DATABASE: openthreads
+    volumes:
+      - mongodb_data:/data/db
+    healthcheck:
+      test: ['CMD', 'mongosh', '--eval', "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+volumes:
+  mongodb_data:

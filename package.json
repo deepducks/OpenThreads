@@ -1,0 +1,17 @@
+{
+  "name": "openthreads",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "packages/core",
+    "packages/storage/mongodb"
+  ],
+  "scripts": {
+    "build": "bun run --filter='*' build",
+    "test": "bun test",
+    "test:integration": "docker compose -f docker-compose.test.yml up --abort-on-container-exit --exit-code-from test"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.0"
+  }
+}

@@ -1,0 +1,31 @@
+version: '3.8'
+
+services:
+  mongodb:
+    image: mongo:7
+    ports:
+      - '27017:27017'
+    environment:
+      MONGO_INITDB_DATABASE: openthreads_test
+    healthcheck:
+      test: ['CMD', 'mongosh', '--eval', "db.adminCommand('ping')"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  test:
+    image: oven/bun:1
+    working_dir: /app
+    volumes:
+      - .:/app
+    environment:
+      TEST_MONGODB_URI: mongodb://mongodb:27017
+    command: >
+      sh -c "
+        bun install &&
+        bun run --filter='@openthreads/storage-mongodb' test:integration
+      "
+    depends_on:
+      mongodb:
+        condition: service_healthy
