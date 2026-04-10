@@ -1,49 +1,30 @@
+import type { OpenThreadsMessage } from './message.js';
+
 /**
- * Turn — each individual interaction within a thread.
- * Represents one sender-message → recipient-response cycle,
- * identified by a turnId.
+ * Direction of a turn within a thread.
+ * - inbound:  A message arriving from a human sender via a channel.
+ * - outbound: A message sent to a human sender via a channel (the reply).
+ */
+export type TurnDirection = 'inbound' | 'outbound';
+
+/**
+ * A Turn represents one individual interaction within a Thread —
+ * one sender-message → recipient-response cycle.
  */
 export interface Turn {
-  /** OpenThreads-generated turn identifier (e.g. "ot_turn_001") */
+  /** OpenThreads turn identifier, prefixed with "ot_turn_" */
   turnId: string;
   /** The thread this turn belongs to */
   threadId: string;
-  /** The inbound message from the sender (human) */
-  inbound: TurnInbound;
-  /** The outbound response from the recipient (system), if received */
-  outbound?: TurnOutbound;
-  /** Current lifecycle status of the turn */
-  status: TurnStatus;
-  /** Timestamp of the inbound message (used for chronological ordering) */
+  /** Whether this is an inbound (human→system) or outbound (system→human) message */
+  direction: TurnDirection;
+  /** The message payload (Chat SDK or A2H, single or array) */
+  message: OpenThreadsMessage | OpenThreadsMessage[];
+  /** Timestamp of this turn */
   timestamp: Date;
-  createdAt: Date;
-  updatedAt: Date;
 }
 
-export interface TurnInbound {
-  /** Raw message payload as received from the channel */
-  message: unknown;
-  /** Sender identity on the platform */
-  sender: {
-    id: string;
-    name?: string;
-    username?: string;
-  };
-  /** When the message was received */
-  timestamp: Date;
-  /** Native message ID from the platform */
-  nativeMessageId?: string;
-}
-
-export interface TurnOutbound {
-  /** Reply payload sent back to the channel */
-  message: unknown;
-  /** When the reply was sent */
-  timestamp: Date;
-  /** Native message ID of the reply on the platform */
-  nativeMessageId?: string;
-}
-
-export type TurnStatus = 'pending' | 'delivered' | 'responded' | 'failed';
-
-export type TurnInput = Omit<Turn, 'createdAt' | 'updatedAt'>;
+export type CreateTurnInput = Omit<Turn, 'turnId' | 'timestamp'> & {
+  turnId?: string;
+  timestamp?: Date;
+};

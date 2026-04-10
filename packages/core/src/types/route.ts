@@ -1,43 +1,39 @@
 /**
- * Route — a routing rule that maps incoming messages (sender via channel)
- * to outbound recipients. Routes are evaluated in priority order.
+ * Criteria used to match incoming messages to a Route.
+ * All provided fields are ANDed together (all must match).
+ */
+export interface RouteCriteria {
+  /** Match messages from a specific channel ID */
+  channelId?: string;
+  /** Match messages from a specific group/channel within the platform */
+  groupId?: string;
+  /** Match only DM (direct message) events */
+  isDm?: boolean;
+  /** Match messages within a specific native thread ID */
+  nativeThreadId?: string;
+  /** Match messages that mention the bot */
+  isMention?: boolean;
+  /** Match messages from a specific sender ID */
+  senderId?: string;
+  /** Match messages whose text matches this regex pattern */
+  contentPattern?: string;
+}
+
+/**
+ * A Route maps incoming messages (matching given criteria) to an outbound Recipient.
+ * Routes are evaluated in priority order (lower number = higher priority).
  */
 export interface Route {
   /** Unique identifier for the route */
-  routeId: string;
-  /** Human-readable name for the route */
-  name: string;
-  /** Criteria that must match for this route to be applied */
+  id: string;
+  /** Criteria that an incoming message must satisfy to trigger this route */
   criteria: RouteCriteria;
-  /** The recipient that receives matched messages */
+  /** The recipient to forward matching messages to */
   recipientId: string;
-  /** Priority order — lower numbers are evaluated first */
+  /** Priority for ordering when multiple routes match (lower = higher priority) */
   priority: number;
-  /** Whether the route is currently active */
-  active: boolean;
-  createdAt: Date;
-  updatedAt: Date;
+  /** Whether this route is currently active */
+  enabled?: boolean;
 }
 
-export interface RouteCriteria {
-  /** Match by specific channel */
-  channelId?: string;
-  /** Match by channel type (e.g. 'slack', 'telegram') */
-  channelType?: string;
-  /** Match by target ID (group, DM, channel) on the platform */
-  targetId?: string;
-  /** Match by specific thread */
-  threadId?: string;
-  /** Match by sender ID */
-  senderId?: string;
-  /** Match by mention (e.g. bot username) */
-  mention?: string;
-  /** Match message content against a regex pattern */
-  contentPattern?: string;
-  /** Whether to match only direct messages */
-  isDM?: boolean;
-  /** Additional platform-specific criteria */
-  [key: string]: unknown;
-}
-
-export type RouteInput = Omit<Route, 'createdAt' | 'updatedAt'>;
+export type CreateRouteInput = Route;

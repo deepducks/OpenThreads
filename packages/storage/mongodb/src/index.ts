@@ -1,2 +1,4 @@
-export { MongoStorageAdapter } from './MongoStorageAdapter.js';
-export type { MongoStorageAdapterOptions } from './MongoStorageAdapter.js';
+// @openthreads/storage-mongodb
+// MongoDB implementation of the StorageAdapter interface
+
+export { MongoDBStorageAdapter } from './adapter'

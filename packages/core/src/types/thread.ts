@@ -1,37 +1,27 @@
 /**
- * Thread — a conversation identified by an OpenThreads-generated threadId.
+ * A Thread is a conversation identified by a unique OpenThreads-generated threadId.
  *
  * Three scenarios:
- * - Native threads (Slack, Discord forums): 1:1 mapping with native thread.
- * - Channels without threads (Telegram DM, WhatsApp): virtual threads via reply chains.
- * - Messages outside threads: belong to the target's "main thread" (isMain = true).
+ * - Channel with native threads (Slack, Discord): nativeThreadId maps 1:1 to the native thread.
+ * - Channel without threads (Telegram DM, WhatsApp): nativeThreadId is null; OpenThreads
+ *   creates virtual threads by grouping messages in reply chains.
+ * - Messages outside any thread: belong to the channel/target's "main thread"
+ *   (nativeThreadId = null, special case).
  */
 export interface Thread {
-  /** OpenThreads-generated thread identifier (e.g. "ot_thr_abc123") */
+  /** OpenThreads thread identifier, prefixed with "ot_thr_" */
   threadId: string;
   /** The channel this thread belongs to */
   channelId: string;
-  /**
-   * The native thread/conversation ID from the platform (if applicable).
-   * For Slack: thread_ts. For Discord: message ID of the parent. Null for virtual threads.
-   */
-  nativeThreadId?: string;
-  /**
-   * The target entity on the platform (channel, group, DM, user, etc.).
-   * E.g. Slack channel ID "C0123", Telegram chat_id "-100456".
-   */
+  /** The native platform thread/channel/DM ID, or null for virtual threads */
+  nativeThreadId: string | null;
+  /** The target within the channel (group ID, DM user ID, channel name, etc.) */
   targetId: string;
-  /** The recipient currently associated with this thread (if any) */
-  recipientId?: string;
-  /**
-   * Whether this is the "main thread" for the given channel+target pair.
-   * Messages outside native threads fall into the main thread.
-   */
-  isMain: boolean;
-  /** Metadata about the thread's current state */
-  metadata?: Record<string, unknown>;
+  /** Timestamp when the thread was created in OpenThreads */
   createdAt: Date;
-  updatedAt: Date;
 }
 
-export type ThreadInput = Omit<Thread, 'createdAt' | 'updatedAt'>;
+export type CreateThreadInput = Omit<Thread, 'threadId' | 'createdAt'> & {
+  threadId?: string;
+  createdAt?: Date;
+};

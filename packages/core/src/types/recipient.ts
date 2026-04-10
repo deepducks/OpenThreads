@@ -1,21 +1,17 @@
 /**
- * Recipient — an external system that consumes messages from OpenThreads
- * and optionally sends replies back (agent, API, service, n8n workflow, etc.).
- * Represents the interface with the machine world.
+ * A Recipient represents an external system (agent, API, service) that
+ * consumes messages from OpenThreads and sends replies back.
+ * It is the interface between OpenThreads and the machine world.
  */
 export interface Recipient {
   /** Unique identifier for the recipient */
-  recipientId: string;
-  /** Human-readable display name */
-  name: string;
-  /** Webhook URL where OpenThreads delivers inbound envelopes */
+  id: string;
+  /** The URL to POST outbound envelopes to */
   webhookUrl: string;
-  /** Optional secret for signing outbound webhook requests */
-  webhookSecret?: string;
-  /** Whether the recipient is currently active */
-  active: boolean;
-  createdAt: Date;
-  updatedAt: Date;
+  /** Optional API key for authenticating outbound webhook calls */
+  apiKey?: string;
+  /** Arbitrary metadata for this recipient */
+  metadata?: Record<string, unknown>;
 }
 
-export type RecipientInput = Omit<Recipient, 'createdAt' | 'updatedAt'>;
+export type CreateRecipientInput = Recipient;

@@ -1,5 +1,5 @@
 {
-  "name": "@openthreads/storage-mongodb",
+  "name": "@openthreads/trust",
   "version": "0.0.1",
   "private": false,
   "type": "module",
@@ -18,11 +18,7 @@
     "dev": "vite build --watch",
     "test": "bun test"
   },
-  "peerDependencies": {
-    "mongodb": ">=6.0.0"
-  },
   "devDependencies": {
-    "mongodb": "^6.0.0",
     "vite": "*",
     "vite-plugin-dts": "*",
     "typescript": "*"

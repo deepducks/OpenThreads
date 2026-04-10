@@ -4,15 +4,17 @@
   "private": true,
   "workspaces": [
     "packages/core",
-    "packages/storage/mongodb"
+    "packages/storage/*",
+    "packages/channels/*",
+    "packages/server",
+    "packages/trust"
   ],
   "scripts": {
-    "build": "bun run --filter='*' build",
-    "test": "bun run --filter='*' test",
-    "lint": "bun run --filter='*' lint",
-    "typecheck": "bun run --filter='*' typecheck"
+    "test": "bun test",
+    "typecheck": "bun run --filter '*' typecheck"
   },
   "devDependencies": {
-    "typescript": "^5.4.0"
+    "@types/bun": "latest",
+    "typescript": "^5.0.0"
   }
 }
