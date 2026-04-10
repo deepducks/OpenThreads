@@ -204,6 +204,30 @@ export async function listThreadsByChannel(
   return (await coll.find(query as Filter<Thread>).sort({ createdAt: -1 }).toArray()) as Thread[];
 }
 
+export async function listThreads(options?: {
+  channelId?: string;
+  targetId?: string;
+  search?: string;
+  limit?: number;
+  skip?: number;
+}): Promise<Thread[]> {
+  const coll = await col<Thread>('threads');
+  const query: Record<string, unknown> = {};
+  if (options?.channelId) query['channelId'] = options.channelId;
+  if (options?.targetId) query['targetId'] = options.targetId;
+  if (options?.search) {
+    query['$or'] = [
+      { threadId: { $regex: options.search, $options: 'i' } },
+      { targetId: { $regex: options.search, $options: 'i' } },
+      { channelId: { $regex: options.search, $options: 'i' } },
+    ];
+  }
+  let cursor = coll.find(query as Filter<Thread>).sort({ createdAt: -1 });
+  if (options?.skip) cursor = cursor.skip(options.skip);
+  if (options?.limit) cursor = cursor.limit(options.limit);
+  return (await cursor.toArray()) as Thread[];
+}
+
 // ─── Turns ────────────────────────────────────────────────────────────────────
 
 export async function createTurn(input: CreateTurnInput): Promise<Turn> {
