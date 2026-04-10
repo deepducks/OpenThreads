@@ -94,8 +94,10 @@ jobs:
           BASE_BRANCH=$(echo "$COMMENTS" | grep -oP 'Base branch: `\K[^`]+' | tail -1 || echo "main")
           META_NUM=$(echo "$BASE_BRANCH" | grep -oP '\d+' || echo "0")
 
-          # Find existing branch pushed by the failed task worker
-          BRANCH=$(git ls-remote --heads origin "claude/*issue-${ISSUE_NUM}*" | awk '{print $2}' | sed 's|refs/heads/||' | sort | tail -1)
+          # Find existing branch pushed by the failed task worker (use gh api, not git ls-remote — git auth not available)
+          BRANCH=$(gh api "repos/${{ github.repository }}/git/matching-refs/heads/claude/" \
+            --jq "[.[].ref | select(contains(\"issue-${ISSUE_NUM}-\"))] | sort | last // empty" \
+            | sed 's|refs/heads/||' 2>/dev/null || echo "")
 
           # Get the last failed run ID for reference
           FAILED_RUN=$(gh run list --workflow=claude-task.yml --status=failure --limit=5 --json databaseId,createdAt \
@@ -136,7 +138,9 @@ jobs:
           ISSUE_NUM: ${{ github.event.issue.number }}
           BASE_BRANCH: ${{ steps.meta.outputs.base_branch }}
         run: |
-          BRANCH=$(git ls-remote --heads origin "claude/*issue-${ISSUE_NUM}*" | awk '{print $2}' | sed 's|refs/heads/||' | sort | tail -1)
+          BRANCH=$(gh api "repos/${{ github.repository }}/git/matching-refs/heads/claude/" \
+            --jq "[.[].ref | select(contains(\"issue-${ISSUE_NUM}-\"))] | sort | last // empty" \
+            | sed 's|refs/heads/||' 2>/dev/null || echo "")
 
           if [ -z "$BRANCH" ]; then
             echo "No branch found for issue #${ISSUE_NUM}"
@@ -161,17 +165,15 @@ jobs:
             exit 0
           fi
 
-          git fetch origin "$BRANCH" "$BASE_BRANCH"
-          git checkout "$BRANCH"
-          if git rebase "origin/$BASE_BRANCH"; then
-            git push --force-with-lease origin "$BRANCH"
-            gh pr merge "$PR_NUM" --merge
-          else
-            git rebase --abort
-            git merge "origin/$BASE_BRANCH" -X theirs -m "Merge $BASE_BRANCH to resolve conflicts"
-            git push origin "$BRANCH"
-            gh pr merge "$PR_NUM" --merge
-          fi
+          # Fallback: merge via API
+          gh api "repos/${{ github.repository }}/pulls/${PR_NUM}/merge" \
+            -X PUT -f merge_method=merge 2>/dev/null && {
+            echo "PR #$PR_NUM merged via API"
+            exit 0
+          }
+
+          echo "Merge failed — PR may need manual conflict resolution"
+          exit 1
 
       # --- Always notify the result ---
       # Posts on the task issue AND the meta issue (on failure).

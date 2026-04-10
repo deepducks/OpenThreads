@@ -160,14 +160,12 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ISSUE_NUM: ${{ github.event.issue.number }}
           BASE_BRANCH: ${{ steps.meta.outputs.base_branch }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # Find branch pushed by claude action for this issue
-          BRANCH=$(git ls-remote --heads origin "claude/*-issue-${ISSUE_NUM}-*" | awk '{print $2}' | sed 's|refs/heads/||' | sort | tail -1)
-
-          # Fallback: try other naming patterns
-          if [ -z "$BRANCH" ]; then
-            BRANCH=$(git ls-remote --heads origin "claude/*issue-${ISSUE_NUM}*" | awk '{print $2}' | sed 's|refs/heads/||' | sort | tail -1)
-          fi
+          # Use gh api instead of git ls-remote (git auth is not available in post-steps)
+          BRANCH=$(gh api "repos/${{ github.repository }}/git/matching-refs/heads/claude/" \
+            --jq "[.[].ref | select(contains(\"issue-${ISSUE_NUM}-\"))] | sort | last // empty" \
+            | sed 's|refs/heads/||' 2>/dev/null || echo "")
 
           if [ -z "$BRANCH" ]; then
             echo "No branch found for issue #${ISSUE_NUM}, skipping PR creation"
@@ -195,24 +193,17 @@ jobs:
             exit 0
           fi
 
-          echo "Direct merge failed, resolving conflicts..."
+          echo "Direct merge failed, attempting merge via API..."
 
-          # Resolve conflicts: rebase onto base branch
-          git fetch origin "$BRANCH" "$BASE_BRANCH"
-          git checkout "$BRANCH"
-          if git rebase "origin/$BASE_BRANCH"; then
-            git push --force-with-lease origin "$BRANCH"
-            echo "Rebased successfully, merging..."
-            gh pr merge "$PR_NUM" --merge
-          else
-            git rebase --abort
-            # Fallback: merge with theirs strategy
-            git merge "origin/$BASE_BRANCH" -X theirs -m "Merge $BASE_BRANCH to resolve conflicts"
-            git push origin "$BRANCH"
-            gh pr merge "$PR_NUM" --merge
-          fi
+          # Use gh API to attempt merge (avoids git auth issues)
+          gh api "repos/${{ github.repository }}/pulls/${PR_NUM}/merge" \
+            -X PUT -f merge_method=merge 2>/dev/null && {
+            echo "PR #$PR_NUM merged via API"
+            exit 0
+          }
 
-          echo "PR #$PR_NUM merged after conflict resolution"
+          echo "API merge also failed — PR may need manual conflict resolution"
+          exit 1
 
       # --- Failure notification ---
       # Posts on both the meta issue and the task issue so failures are visible.
