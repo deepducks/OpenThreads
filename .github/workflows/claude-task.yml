@@ -205,6 +205,23 @@ jobs:
           echo "API merge also failed — PR may need manual conflict resolution"
           exit 1
 
+      # --- Notify meta issue to continue the loop ---
+      # CRITICAL: PR merges done by GITHUB_TOKEN do NOT trigger `pull_request: closed`
+      # events (GitHub Actions limitation to prevent infinite loops). Without this step,
+      # the meta orchestrator would never learn that a task was merged. By commenting
+      # `@claude` on the meta issue, we trigger the meta workflow via `issue_comment`,
+      # which reads the current state and advances to the next wave.
+      - name: Notify meta to continue loop
+        if: success()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE_NUM: ${{ github.event.issue.number }}
+          META_NUM: ${{ steps.meta.outputs.meta_number }}
+        run: |
+          if [ "$META_NUM" != "0" ] && [ -n "$META_NUM" ]; then
+            gh issue comment "$META_NUM" --body "@claude Task #${ISSUE_NUM} merged. Check progress and assign next tasks."
+          fi
+
       # --- Failure notification ---
       # Posts on both the meta issue and the task issue so failures are visible.
       - name: Notify failure on meta issue

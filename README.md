@@ -15,10 +15,10 @@ This repository uses three GitHub Actions workflows powered by [Claude Code](htt
 ### Architecture
 
 ```
-Human comments @claude          PR merged into meta/<N>
-on meta issue (kickstart)       (main loop trigger)
-        │                              │
-        ▼                              ▼
+Human comments @claude
+on meta issue (kickstart)
+        │
+        ▼
    ┌──────────────────────────────────────────┐
    │         claude-meta.yml                   │
    │  1. Determine meta issue (#N)             │
@@ -35,8 +35,9 @@ on meta issue (kickstart)       (main loop trigger)
    │  2. Checkout meta/<N> (not main)          │
    │  3. Implement the issue                   │
    │  4. Auto-create PR → auto-merge           │
+   │  5. Comment @claude on meta issue ←────── │─── loop closure
    └──────────────┬───────────────────────────┘
-                  │ PR merged into meta/<N>
+                  │ comment triggers meta workflow
                   ▼
               loops back to claude-meta.yml
                   │
@@ -44,6 +45,8 @@ on meta issue (kickstart)       (main loop trigger)
                   ▼
    meta agent opens final PR: meta/<N> → main
 ```
+
+> **Loop closure note:** GitHub Actions events triggered by `GITHUB_TOKEN` do not fire other workflows (to prevent infinite loops). This means a PR merge done by the task worker's post-step does NOT trigger `pull_request: closed`. Instead, the task worker comments `@claude` on the meta issue after merging, which triggers the orchestrator via `issue_comment`. This is the primary loop mechanism.
 
 ### Branch Model
 
@@ -145,8 +148,8 @@ The safety net. Picks up failed tasks and tries to complete or fix them.
    - Post a summary on the meta issue
 
 5. From here, the loop runs autonomously:
-   - Task workers implement → create PRs → merge
-   - Each merge triggers the orchestrator → marks done → assigns next wave
+   - Task workers implement → create PRs → merge → comment on meta issue
+   - Each comment triggers the orchestrator → marks done → assigns next wave
    - Repeats until all waves are complete
    - Final PR: `meta/<N>` → `main`
 
@@ -196,5 +199,15 @@ Multiple meta issues can coexist. Each gets its own `meta/<N>` branch and operat
 | **Failure notifications** | Failures are reported on both the meta and task issues |
 | **Fix agent** | `@claude fix` provides semi-automated recovery |
 | **Idempotent orchestrator** | Re-running the meta agent is always safe — it reads current state |
-| **Conflict resolution** | Task worker auto-resolves merge conflicts via rebase or merge strategy |
+| **Conflict resolution** | Task worker auto-resolves merge conflicts via API merge |
 | **Bot allowlist** | Only `claude[bot]` can trigger task workers, preventing spam |
+| **Loop closure via comment** | Task workers comment on meta issue after merge (GITHUB_TOKEN merges don't emit PR events) |
+
+### Known limitations
+
+| Limitation | Workaround |
+|---|---|
+| `GITHUB_TOKEN` events don't trigger other workflows | Task post-step comments on meta issue to close the loop |
+| Workflow validation fails when workflow files change between trigger and execution | Re-trigger via `@claude` comment on meta issue (uses latest workflow from `main`) |
+| `git` auth not available in post-steps | Post-steps use `gh api` and `gh` CLI instead of `git` commands |
+| Parallel tasks in the same wave may cause merge conflicts | Post-step tries direct merge, falls back to API merge; unresolvable conflicts trigger failure notification |

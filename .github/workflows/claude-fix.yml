@@ -175,6 +175,19 @@ jobs:
           echo "Merge failed — PR may need manual conflict resolution"
           exit 1
 
+      # --- Notify meta issue to continue the loop ---
+      # Same as task worker: GITHUB_TOKEN merges don't trigger pull_request events.
+      - name: Notify meta to continue loop
+        if: success()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE_NUM: ${{ github.event.issue.number }}
+          META_NUM: ${{ steps.meta.outputs.meta_number }}
+        run: |
+          if [ "$META_NUM" != "0" ] && [ -n "$META_NUM" ]; then
+            gh issue comment "$META_NUM" --body "@claude Task #${ISSUE_NUM} fixed and merged. Check progress and assign next tasks."
+          fi
+
       # --- Always notify the result ---
       # Posts on the task issue AND the meta issue (on failure).
       # Uses `if: always()` so notification happens even on failure.

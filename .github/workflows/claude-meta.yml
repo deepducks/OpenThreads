@@ -10,8 +10,11 @@
 #
 # HOW IT WORKS
 # ------------
-# 1. Triggered when a PR is merged into a `meta/*` branch, or when someone
-#    comments `@claude` on a meta issue (kickstart / manual retry).
+# 1. Triggered when:
+#    a. A PR is merged into a `meta/*` branch (pull_request closed + merged)
+#    b. Someone comments `@claude` on a meta issue (kickstart / manual retry)
+#    c. A task worker's post-step comments `@claude` on the meta issue after
+#       merging a PR. This is the PRIMARY loop mechanism — see LOOP CLOSURE below.
 # 2. Determines which meta issue to operate on:
 #    - PR merge → base branch `meta/<N>` → meta issue is #N
 #    - Comment  → the issue itself is the meta issue
@@ -46,6 +49,21 @@
 # -------
 # 60-minute hard limit. The orchestrator typically finishes in 1–3 minutes,
 # but this guards against runaway API calls or infinite loops.
+#
+# LOOP CLOSURE (GITHUB_TOKEN LIMITATION)
+# ----------------------------------------
+# GitHub Actions events triggered by GITHUB_TOKEN do NOT fire other workflows
+# (to prevent infinite loops). This means when the task worker's post-step
+# merges a PR using GITHUB_TOKEN, the `pull_request: closed` event is NOT
+# emitted, and this orchestrator would never learn about the merge.
+#
+# Solution: the task worker (and fix agent) post-steps comment `@claude` on
+# the meta issue after a successful merge. This fires `issue_comment: created`,
+# which triggers this orchestrator. The orchestrator then reads the current
+# state (merged PRs), updates checkboxes, and assigns the next wave.
+#
+# The `pull_request: closed` trigger is kept as a fallback for human-initiated
+# merges, which DO emit events normally.
 #
 # FAILURE HANDLING
 # ----------------
