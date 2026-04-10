@@ -1,0 +1,29 @@
+{
+  "name": "@openthreads/trust",
+  "version": "0.0.1",
+  "private": false,
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "vite build",
+    "dev": "vite build --watch",
+    "test": "bun test"
+  },
+  "devDependencies": {
+    "vite": "*",
+    "vite-plugin-dts": "*",
+    "typescript": "*"
+  },
+  "dependencies": {
+    "@openthreads/core": "workspace:*"
+  }
+}
