@@ -386,48 +386,58 @@ export async function consumeToken(value: string): Promise<boolean> {
   return result.modifiedCount === 1;
 }
 
-// ─── Settings ─────────────────────────────────────────────────────────────────
+// ─── Form Records ─────────────────────────────────────────────────────────────
 
-export interface ChannelOverride {
-  tokenTtlSeconds?: number;
-  trustLayerEnabled?: boolean;
+/**
+ * A form record tracks the state of an auto-generated A2H form (methods 3 & 4).
+ *
+ * Created lazily on first GET /form/:formKey access. Expires alongside the
+ * ephemeral token TTL. The `formKey` is the turnId for single intents and
+ * `${turnId}_batch` for batch (method 4) forms.
+ */
+export interface FormRecord {
+  /** Form key: turnId for single intent, `${turnId}_batch` for batch */
+  formKey: string;
+  /** The base turn ID */
+  turnId: string;
+  /** Whether this is a batch form (multiple A2H intents) */
+  isBatch: boolean;
+  /** The A2H intent(s) for this form, as serialized JSON */
+  intents: unknown[];
+  /** Current form status */
+  status: 'pending' | 'submitted';
+  /** Human's responses, populated on submission */
+  responses?: unknown[];
+  /** When the form expires */
+  expiresAt: Date;
+  createdAt: Date;
 }
 
-export interface AppSettings {
-  tokenTtlSeconds: number;
-  trustLayerEnabled: boolean;
-  perChannelOverrides: Record<string, ChannelOverride>;
+export async function createFormRecord(
+  record: Omit<FormRecord, 'createdAt'>,
+): Promise<FormRecord> {
+  const doc: FormRecord = { ...record, createdAt: new Date() };
+  const coll = await col<FormRecord>('forms');
+  await coll.insertOne(doc as unknown as FormRecord & { _id?: unknown });
+  return doc;
 }
 
-export const DEFAULT_SETTINGS: AppSettings = {
-  tokenTtlSeconds: 86400,
-  trustLayerEnabled: false,
-  perChannelOverrides: {},
-};
-
-interface SettingsDoc extends AppSettings {
-  name: string;
+export async function getFormRecord(formKey: string): Promise<FormRecord | null> {
+  const coll = await col<FormRecord>('forms');
+  return (await coll.findOne({ formKey } as Filter<FormRecord>)) as FormRecord | null;
 }
 
-export async function getSettings(): Promise<AppSettings> {
-  const coll = await col<SettingsDoc>('settings');
-  const doc = await coll.findOne({ name: 'global' } as Filter<SettingsDoc>);
-  if (!doc) return { ...DEFAULT_SETTINGS };
-  return {
-    tokenTtlSeconds: doc.tokenTtlSeconds ?? DEFAULT_SETTINGS.tokenTtlSeconds,
-    trustLayerEnabled: doc.trustLayerEnabled ?? DEFAULT_SETTINGS.trustLayerEnabled,
-    perChannelOverrides: doc.perChannelOverrides ?? {},
-  };
-}
-
-export async function updateSettings(updates: Partial<AppSettings>): Promise<AppSettings> {
-  const coll = await col<SettingsDoc>('settings');
-  await coll.updateOne(
-    { name: 'global' } as Filter<SettingsDoc>,
-    { $set: updates, $setOnInsert: { name: 'global' } } as UpdateFilter<SettingsDoc>,
-    { upsert: true },
+export async function updateFormRecord(
+  formKey: string,
+  updates: Partial<Pick<FormRecord, 'status' | 'responses'>>,
+): Promise<FormRecord | null> {
+  const coll = await col<FormRecord>('forms');
+  const result = await coll.findOneAndUpdate(
+    { formKey } as Filter<FormRecord>,
+    { $set: updates } as UpdateFilter<FormRecord>,
+    { returnDocument: 'after' },
   );
-  return getSettings();
+  return result as FormRecord | null;
 }
 
 // ─── Ensure indexes ───────────────────────────────────────────────────────────
@@ -459,6 +469,11 @@ export async function ensureIndexes(): Promise<void> {
     db.collection('tokens').createIndexes([
       { key: { value: 1 }, unique: true, name: 'tokens_value_unique' },
       { key: { expiresAt: 1 }, expireAfterSeconds: 0, name: 'tokens_expiresAt_ttl' },
+    ]),
+    db.collection('forms').createIndexes([
+      { key: { formKey: 1 }, unique: true, name: 'forms_formKey_unique' },
+      { key: { turnId: 1 }, name: 'forms_turnId' },
+      { key: { expiresAt: 1 }, expireAfterSeconds: 0, name: 'forms_expiresAt_ttl' },
     ]),
   ]);
 }
