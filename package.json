@@ -1,0 +1,13 @@
+{
+  "name": "openthreads",
+  "private": true,
+  "workspaces": [
+    "packages/core",
+    "packages/channels/slack"
+  ],
+  "scripts": {
+    "test": "bun test",
+    "build": "bun run --filter='*' build",
+    "typecheck": "bun run --filter='*' typecheck"
+  }
+}
