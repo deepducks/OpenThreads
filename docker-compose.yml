@@ -1,5 +1,14 @@
 version: '3.8'
 
+# ─── Profiles ─────────────────────────────────────────────────────────────────
+#
+#  (default)     mongodb only — use for local dev with `bun run dev`
+#  production    full stack: mongodb + openthreads app
+#
+# Usage:
+#   docker compose up                           # dev: MongoDB only
+#   docker compose --profile production up -d   # prod: full stack
+
 services:
   mongodb:
     image: mongo:7.0
@@ -19,6 +28,45 @@ services:
       retries: 5
       start_period: 10s
     restart: unless-stopped
+
+  app:
+    profiles: [production]
+    image: ghcr.io/deepducks/openthreads:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: openthreads-app
+    ports:
+      - '${PORT:-3000}:3000'
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      MONGODB_URI: mongodb://openthreads:openthreads@mongodb:27017/openthreads
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set}
+      MANAGEMENT_API_KEY: ${MANAGEMENT_API_KEY:-}
+      OPENTHREADS_BASE_URL: ${OPENTHREADS_BASE_URL:-http://localhost:3000}
+      REPLY_TOKEN_TTL: ${REPLY_TOKEN_TTL:-86400}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      LOG_FORMAT: ${LOG_FORMAT:-json}
+      # Channel credentials (set the ones you need)
+      SLACK_BOT_TOKEN: ${SLACK_BOT_TOKEN:-}
+      SLACK_SIGNING_SECRET: ${SLACK_SIGNING_SECRET:-}
+      SLACK_APP_TOKEN: ${SLACK_APP_TOKEN:-}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      DISCORD_BOT_TOKEN: ${DISCORD_BOT_TOKEN:-}
+      DISCORD_CLIENT_ID: ${DISCORD_CLIENT_ID:-}
+      # Trust layer (optional)
+      TRUST_LAYER_ENABLED: ${TRUST_LAYER_ENABLED:-false}
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ['CMD-SHELL', 'curl -f http://localhost:3000/api/health || exit 1']
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
 
 volumes:
   mongodb_data:

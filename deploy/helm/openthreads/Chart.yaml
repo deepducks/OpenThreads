@@ -1,0 +1,21 @@
+apiVersion: v2
+name: openthreads
+description: >
+  OpenThreads — a unified messaging gateway with human-in-the-loop support.
+  Bridges Slack, Discord, Telegram, WhatsApp, and other channels to any
+  HTTP-based agent or service via the A2H protocol.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+keywords:
+  - openthreads
+  - a2h
+  - human-in-the-loop
+  - messaging
+  - webhook
+home: https://github.com/deepducks/OpenThreads
+sources:
+  - https://github.com/deepducks/OpenThreads
+maintainers:
+  - name: DeepDucks
+    url: https://github.com/deepducks
