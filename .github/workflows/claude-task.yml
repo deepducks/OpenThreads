@@ -198,14 +198,26 @@ jobs:
           prompt: |
             Implement issue #${{ steps.meta.outputs.issue_number }} in this repository.
 
-            Steps:
-            1. Read the full issue body with `gh issue view ${{ steps.meta.outputs.issue_number }}` — the body contains the complete specification (tasks, acceptance criteria, dependencies).
-            2. Implement all tasks listed in the issue, following the acceptance criteria.
-            3. Commit your changes with a clear message. The workflow will automatically create and merge a PR targeting `${{ steps.meta.outputs.base_branch }}`.
+            ## Steps
 
-            Notes:
-            - You are already checked out on `${{ steps.meta.outputs.base_branch }}` and should work from there.
-            - Do not manually create a PR — the workflow handles that.
+            1. Read the full issue body: `gh issue view ${{ steps.meta.outputs.issue_number }}` — the body contains the complete specification (tasks, acceptance criteria, dependencies).
+
+            2. Implement all tasks listed in the issue, following the acceptance criteria. Use Write/Edit tools to create/modify files.
+
+            3. Create a NEW branch from the current HEAD and commit your changes:
+               ```
+               git checkout -b claude/${{ steps.meta.outputs.meta_number }}-issue-${{ steps.meta.outputs.issue_number }}-$(date +%Y%m%d-%H%M%S)
+               git add -A
+               git commit -m "Implement issue #${{ steps.meta.outputs.issue_number }}"
+               git push -u origin HEAD
+               ```
+
+            4. Do NOT create a PR — the workflow's post-step will detect your branch and create/merge the PR automatically.
+
+            ## Context
+
+            - You are checked out on `${{ steps.meta.outputs.base_branch }}` (the meta integration branch).
+            - Your work must be on a new branch, not directly on the base branch.
             - Keep the scope tight: only implement what the issue asks for.
 
       # --- Auto-create PR and merge ---
