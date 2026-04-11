@@ -17,7 +17,20 @@ export type {
 } from './types/envelope.js';
 
 // ---- A2H Protocol Types ----
-export type { A2HMessage, A2HIntent, A2HContext } from './types/a2h.js';
+export type {
+  A2HMessage,
+  A2HIntent,
+  A2HContext,
+  // Layer 1 (implemented)
+  A2HLayer1Intent,
+  // Layer 2 stubs — pending twilio-labs/a2h-spec stabilisation
+  A2HLayer2Intent,
+  A2HPolicyIntent,
+  A2HRevokeIntent,
+  A2HDelegateIntent,
+  A2HScopeIntent,
+} from './types/a2h.js';
+export { isLayer1Intent, isLayer2Intent } from './types/a2h.js';
 
 // ---- Message Union Types ----
 export type {
@@ -99,3 +112,14 @@ export type { ThreadManagerOptions } from './thread/index.js';
 
 export { TurnManager } from './turn/index.js';
 export type { TurnManagerOptions } from './turn/index.js';
+
+// ---- Reply Engine Extension Point ----
+export {
+  intentHandlerRegistry,
+  IntentHandlerRegistry,
+} from './reply-engine/intent-handler.js';
+export type {
+  IntentHandlerFn,
+  IntentHandlerContext,
+  IntentHandlerResponse,
+} from './reply-engine/intent-handler.js';
