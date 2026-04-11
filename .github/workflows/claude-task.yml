@@ -177,15 +177,22 @@ jobs:
             - Just write the code changes.
 
       # --- Commit and push (deterministic) ---
-      # Whatever the agent wrote on the working tree, commit and push it.
+      # The claude-code-action revokes git credentials after running, so we
+      # re-authenticate the git remote with GITHUB_TOKEN before pushing.
       - name: Commit and push task branch
         if: success()
         env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ISSUE_NUM: ${{ steps.meta.outputs.issue_number }}
           TASK_BRANCH: ${{ steps.prep.outputs.task_branch }}
+          REPO: ${{ github.repository }}
         run: |
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git config user.name "github-actions[bot]"
+
+          # Re-authenticate the git remote using GITHUB_TOKEN
+          # (claude-code-action revokes the original credentials)
+          git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${REPO}.git"
 
           git add -A
           if git diff --cached --quiet; then
