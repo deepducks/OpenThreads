@@ -184,15 +184,29 @@ jobs:
           fetch-depth: 0
 
       # --- Run the Claude agent ---
-      # Interactive mode: reads issue body + comment as context.
+      # Uses an explicit prompt so the behavior is identical for both
+      # issue_comment and workflow_dispatch triggers. The agent reads the
+      # target issue via `gh issue view` and implements it.
       - name: Run Claude Task Worker
         uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          claude_args: "--model claude-sonnet-4-6"
+          claude_args: "--model claude-sonnet-4-6 --allowedTools Bash,Read,Glob,Grep,Write,Edit"
           allowed_bots: "claude[bot],github-actions[bot]"
           base_branch: ${{ steps.meta.outputs.base_branch }}
           branch_prefix: "claude/${{ steps.meta.outputs.meta_number }}-"
+          prompt: |
+            Implement issue #${{ steps.meta.outputs.issue_number }} in this repository.
+
+            Steps:
+            1. Read the full issue body with `gh issue view ${{ steps.meta.outputs.issue_number }}` — the body contains the complete specification (tasks, acceptance criteria, dependencies).
+            2. Implement all tasks listed in the issue, following the acceptance criteria.
+            3. Commit your changes with a clear message. The workflow will automatically create and merge a PR targeting `${{ steps.meta.outputs.base_branch }}`.
+
+            Notes:
+            - You are already checked out on `${{ steps.meta.outputs.base_branch }}` and should work from there.
+            - Do not manually create a PR — the workflow handles that.
+            - Keep the scope tight: only implement what the issue asks for.
 
       # --- Auto-create PR and merge ---
       # The action pushes a branch but does not create a PR in interactive mode.
