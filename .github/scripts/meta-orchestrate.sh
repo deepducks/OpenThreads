@@ -108,15 +108,20 @@ HAS_META_LABEL=$(echo "$ISSUE_JSON" | jq -r '.labels[].name' | grep -qx "meta" &
 #   - Checkbox line with "#N" → task assigned to current wave
 # Output format: "WAVE|<idx>|<name>" and "TASK|<wave_idx>|<task_num>"
 PARSED=$(echo "$ISSUE_BODY" | awk '
-  # Skip checkbox lines when detecting wave headers
-  !/^[[:space:]]*[-*][[:space:]]+\[/ && /[Ww]ave[[:space:]]+[0-9]+/ {
+  # A wave heading is a line that:
+  # - Starts with a heading marker (#, *, or the word "Wave" itself)
+  # - Contains "Wave <N>"
+  # - Is NOT a checkbox line
+  # This prevents inline mentions like "Wave 2 depends on Wave 1" from
+  # being mistakenly parsed as wave headings.
+  /^(#|\*|[Ww]ave)/ && /[Ww]ave[[:space:]]+[0-9]+/ && !/^[[:space:]]*[-*][[:space:]]+\[/ {
     wave++
     name = ""
     if (match($0, /[Ww]ave[[:space:]]+[0-9]+/)) {
       rest = substr($0, RSTART + RLENGTH)
-      # Strip leading separators/decorations
+      # Strip leading separators/decorations: : — - * (
       gsub(/^[[:space:]]*[:——\-\*\(]+[[:space:]]*/, "", rest)
-      # Strip trailing decorations
+      # Strip trailing ) and **
       gsub(/[\)\*]+[[:space:]]*$/, "", rest)
       gsub(/[[:space:]]+$/, "", rest)
       name = rest
@@ -125,7 +130,7 @@ PARSED=$(echo "$ISSUE_BODY" | awk '
     printf "WAVE|%d|%s\n", wave, name
     next
   }
-  # Checkbox line with #N
+  # Checkbox line with #N (only counted if already inside a wave)
   wave >= 1 && /^[[:space:]]*[-*][[:space:]]+\[[xX[:space:]]\][[:space:]]+#[0-9]+/ {
     if (match($0, /#[0-9]+/)) {
       num = substr($0, RSTART+1, RLENGTH-1)
