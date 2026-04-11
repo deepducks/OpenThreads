@@ -108,9 +108,12 @@ log "Plan has $NUM_WAVES waves"
 # 3. Ensure meta branch exists
 # -----------------------------------------------------------------------------
 BRANCH="meta/$META"
-BRANCH_EXISTS=$(gh api "repos/$REPO/git/refs/heads/$BRANCH" --jq '.ref' 2>/dev/null || echo "")
+# Use exit code (not output) to check branch existence — more robust than
+# parsing `gh api --jq '.ref'` output, which can return "null" string on 404.
 FIRST_RUN=false
-if [[ -z "$BRANCH_EXISTS" ]]; then
+if gh api "repos/$REPO/git/refs/heads/$BRANCH" &>/dev/null; then
+  log "Branch $BRANCH already exists"
+else
   log "Creating branch $BRANCH from main"
   MAIN_SHA=$(gh api "repos/$REPO/git/refs/heads/main" --jq '.object.sha')
   gh api "repos/$REPO/git/refs" -X POST -f ref="refs/heads/$BRANCH" -f sha="$MAIN_SHA" >/dev/null
@@ -119,15 +122,13 @@ if [[ -z "$BRANCH_EXISTS" ]]; then
   # Wait for the branch to be visible to subsequent API calls (replication lag).
   # Without this, task workers dispatched right after may fail to checkout.
   for i in 1 2 3 4 5; do
-    if gh api "repos/$REPO/git/refs/heads/$BRANCH" --jq '.ref' &>/dev/null; then
+    if gh api "repos/$REPO/git/refs/heads/$BRANCH" &>/dev/null; then
       log "Branch $BRANCH is visible (attempt $i)"
       break
     fi
     log "Waiting for branch $BRANCH to propagate (attempt $i)..."
     sleep 1
   done
-else
-  log "Branch $BRANCH already exists"
 fi
 
 # -----------------------------------------------------------------------------
