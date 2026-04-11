@@ -287,31 +287,40 @@ for t in $NEXT_TASKS; do
     continue
   fi
 
-  # Check if task issue already has a recent @claude comment from the orchestrator
-  RECENT_TRIGGER=$(gh issue view "$t" --repo "$REPO" --json comments \
-    --jq '[.comments[] | select(.body | contains("@claude Implement this issue"))] | last.body // empty')
-  if [[ -n "$RECENT_TRIGGER" ]]; then
-    log "Task #$t already has assignment comment — skipping re-assignment"
-    SKIPPED+=("#$t (already assigned)")
+  # Check if there's an in-progress or queued task worker run for this issue
+  EXISTING_RUN=$(gh run list --repo "$REPO" --workflow=claude-task.yml \
+    --status=in_progress --json databaseId,displayTitle --limit 20 \
+    --jq "[.[] | select(.displayTitle | contains(\"#$t\"))] | .[0].databaseId // empty" 2>/dev/null || echo "")
+  if [[ -n "$EXISTING_RUN" ]]; then
+    log "Task #$t already has in-progress run #$EXISTING_RUN — skipping"
+    SKIPPED+=("#$t (run in progress)")
     continue
   fi
 
   # Determine priority (for auto-merge flag)
   PRIORITY=$(gh issue view "$t" --repo "$REPO" --json labels --jq '.labels[].name' | grep -oP 'priority:P\K\d' | head -1 || echo "")
 
+  # Post informational comment on task issue (visible trail for humans).
+  # NOTE: this comment does NOT trigger the task worker — GITHUB_TOKEN comments
+  # are silent to workflow events. The @claude mention is only for human readers.
   COMMENT="@claude Implement this issue.
 - Base branch: \`$BRANCH\`
 - Target your PR to \`$BRANCH\`
 - Include \`fixes #$t\` in the PR body"
-
   if [[ "$PRIORITY" == "0" ]]; then
     COMMENT="$COMMENT
 - This is P0 — auto-merge is enabled."
   fi
-
   gh issue comment "$t" --repo "$REPO" --body "$COMMENT" >/dev/null
+
+  # Actually trigger the task worker via workflow_dispatch.
+  # This is reliable because workflow_dispatch IS allowed from GITHUB_TOKEN.
+  gh workflow run claude-task.yml --repo "$REPO" \
+    -f issue_number="$t" \
+    -f base_branch="$BRANCH" >/dev/null
+
   ASSIGNED+=("#$t")
-  log "Assigned task #$t"
+  log "Assigned and dispatched task #$t"
 done
 
 # -----------------------------------------------------------------------------
