@@ -53,17 +53,21 @@
 # LOOP CLOSURE (GITHUB_TOKEN LIMITATION)
 # ----------------------------------------
 # GitHub Actions events triggered by GITHUB_TOKEN do NOT fire other workflows
-# (to prevent infinite loops). This means when the task worker's post-step
-# merges a PR using GITHUB_TOKEN, the `pull_request: closed` event is NOT
-# emitted, and this orchestrator would never learn about the merge.
+# (to prevent infinite loops). This affects BOTH:
+#   - pull_request events (PR merges by GITHUB_TOKEN are silent)
+#   - issue_comment events (comments by github-actions[bot] are silent)
 #
-# Solution: the task worker (and fix agent) post-steps comment `@claude` on
-# the meta issue after a successful merge. This fires `issue_comment: created`,
-# which triggers this orchestrator. The orchestrator then reads the current
-# state (merged PRs), updates checkboxes, and assigns the next wave.
+# EXCEPTION: workflow_dispatch and repository_dispatch ARE allowed.
 #
-# The `pull_request: closed` trigger is kept as a fallback for human-initiated
-# merges, which DO emit events normally.
+# Solution: this orchestrator accepts a third trigger — workflow_dispatch with
+# a `meta_issue` input. The task worker (and fix agent) post-steps call
+# `gh workflow run claude-meta.yml -f meta_issue=<N>` after a successful merge.
+# This fires workflow_dispatch, which is the only way to cascade workflow runs
+# from a GITHUB_TOKEN-authenticated step.
+#
+# The `pull_request: closed` and `issue_comment` triggers remain as fallbacks
+# for human-initiated actions (manual merges, kickstart comments), which DO
+# emit events normally.
 #
 # FAILURE HANDLING
 # ----------------
@@ -85,17 +89,26 @@ on:
     types: [closed]
   issue_comment:
     types: [created]
+  workflow_dispatch:
+    inputs:
+      meta_issue:
+        description: 'Meta issue number to orchestrate'
+        required: true
+        type: string
 
 jobs:
   orchestrate:
     runs-on: ubuntu-latest
     timeout-minutes: 60
 
-    # Two trigger paths:
-    # 1. PR merged into a meta/* branch → advance the loop
+    # Three trigger paths:
+    # 1. PR merged into a meta/* branch → advance the loop (human merges only)
     # 2. @claude comment on a meta-labeled issue → kickstart or manual retry
+    # 3. workflow_dispatch from task worker post-step → loop closure (GITHUB_TOKEN
+    #    merges/comments don't emit events, so we call the workflow directly)
     if: >
-      (github.event_name == 'pull_request'
+      github.event_name == 'workflow_dispatch'
+      || (github.event_name == 'pull_request'
         && github.event.pull_request.merged == true
         && startsWith(github.event.pull_request.base.ref, 'meta/'))
       || (github.event_name == 'issue_comment'
@@ -107,6 +120,8 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Run Claude Meta Orchestrator
+        env:
+          META_ISSUE_INPUT: ${{ github.event.inputs.meta_issue }}
         uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
@@ -118,6 +133,7 @@ jobs:
 
             - If triggered by a PR merge: the PR's base branch is `meta/<N>`. The meta issue is #N.
             - If triggered by a comment: the comment is on the meta issue itself. Use that issue number.
+            - If triggered by workflow_dispatch: the meta issue number is in `github.event.inputs.meta_issue` (also available as env var META_ISSUE_INPUT). Use that number.
 
             ## Your job
 

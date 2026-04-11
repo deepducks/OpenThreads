@@ -175,17 +175,18 @@ jobs:
           echo "Merge failed — PR may need manual conflict resolution"
           exit 1
 
-      # --- Notify meta issue to continue the loop ---
-      # Same as task worker: GITHUB_TOKEN merges don't trigger pull_request events.
-      - name: Notify meta to continue loop
+      # --- Trigger meta orchestrator to continue the loop ---
+      # Uses workflow_dispatch because GITHUB_TOKEN-generated events (comments,
+      # merges) don't trigger other workflows, but workflow_dispatch IS allowed.
+      - name: Trigger meta to continue loop
         if: success()
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          ISSUE_NUM: ${{ github.event.issue.number }}
           META_NUM: ${{ steps.meta.outputs.meta_number }}
         run: |
           if [ "$META_NUM" != "0" ] && [ -n "$META_NUM" ]; then
-            gh issue comment "$META_NUM" --body "@claude Task #${ISSUE_NUM} fixed and merged. Check progress and assign next tasks."
+            gh workflow run claude-meta.yml -f meta_issue="$META_NUM"
+            echo "Triggered meta workflow for issue #$META_NUM"
           fi
 
       # --- Always notify the result ---

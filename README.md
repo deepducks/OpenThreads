@@ -35,9 +35,9 @@ on meta issue (kickstart)
    │  2. Checkout meta/<N> (not main)          │
    │  3. Implement the issue                   │
    │  4. Auto-create PR → auto-merge           │
-   │  5. Comment @claude on meta issue ←────── │─── loop closure
+   │  5. gh workflow run claude-meta.yml ←──── │─── loop closure
    └──────────────┬───────────────────────────┘
-                  │ comment triggers meta workflow
+                  │ workflow_dispatch with meta_issue input
                   ▼
               loops back to claude-meta.yml
                   │
@@ -46,7 +46,7 @@ on meta issue (kickstart)
    meta agent opens final PR: meta/<N> → main
 ```
 
-> **Loop closure note:** GitHub Actions events triggered by `GITHUB_TOKEN` do not fire other workflows (to prevent infinite loops). This means a PR merge done by the task worker's post-step does NOT trigger `pull_request: closed`. Instead, the task worker comments `@claude` on the meta issue after merging, which triggers the orchestrator via `issue_comment`. This is the primary loop mechanism.
+> **Loop closure note:** GitHub Actions events triggered by `GITHUB_TOKEN` do not fire other workflows (to prevent infinite loops). This affects both `pull_request` events (PR merges) AND `issue_comment` events (bot comments). The exception is `workflow_dispatch`, which IS allowed. So after merging a task PR, the post-step calls `gh workflow run claude-meta.yml -f meta_issue=<N>` to trigger the orchestrator directly via workflow_dispatch. This is the primary loop mechanism.
 
 ### Branch Model
 
@@ -201,13 +201,13 @@ Multiple meta issues can coexist. Each gets its own `meta/<N>` branch and operat
 | **Idempotent orchestrator** | Re-running the meta agent is always safe — it reads current state |
 | **Conflict resolution** | Task worker auto-resolves merge conflicts via API merge |
 | **Bot allowlist** | Only `claude[bot]` can trigger task workers, preventing spam |
-| **Loop closure via comment** | Task workers comment on meta issue after merge (GITHUB_TOKEN merges don't emit PR events) |
+| **Loop closure via workflow_dispatch** | Task workers call `gh workflow run` on meta after merge |
 
 ### Known limitations
 
 | Limitation | Workaround |
 |---|---|
-| `GITHUB_TOKEN` events don't trigger other workflows | Task post-step comments on meta issue to close the loop |
+| `GITHUB_TOKEN` events don't trigger other workflows (neither PR merges nor bot comments) | Post-step uses `gh workflow run claude-meta.yml` (workflow_dispatch IS allowed) |
 | Workflow validation fails when workflow files change between trigger and execution | Re-trigger via `@claude` comment on meta issue (uses latest workflow from `main`) |
 | `git` auth not available in post-steps | Post-steps use `gh api` and `gh` CLI instead of `git` commands |
 | Parallel tasks in the same wave may cause merge conflicts | Post-step tries direct merge, falls back to API merge; unresolvable conflicts trigger failure notification |

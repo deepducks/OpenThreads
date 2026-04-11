@@ -205,21 +205,23 @@ jobs:
           echo "API merge also failed — PR may need manual conflict resolution"
           exit 1
 
-      # --- Notify meta issue to continue the loop ---
-      # CRITICAL: PR merges done by GITHUB_TOKEN do NOT trigger `pull_request: closed`
-      # events (GitHub Actions limitation to prevent infinite loops). Without this step,
-      # the meta orchestrator would never learn that a task was merged. By commenting
-      # `@claude` on the meta issue, we trigger the meta workflow via `issue_comment`,
-      # which reads the current state and advances to the next wave.
-      - name: Notify meta to continue loop
+      # --- Trigger meta orchestrator to continue the loop ---
+      # CRITICAL: GITHUB_TOKEN-generated events (PR merges, issue comments) do NOT
+      # trigger other workflows — GitHub Actions blocks this to prevent infinite loops.
+      # EXCEPTION: workflow_dispatch and repository_dispatch ARE allowed.
+      #
+      # So we call the meta workflow directly via `gh workflow run`. This fires the
+      # workflow_dispatch trigger with the meta issue number as input, which the
+      # meta agent reads to know which plan to advance.
+      - name: Trigger meta to continue loop
         if: success()
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          ISSUE_NUM: ${{ github.event.issue.number }}
           META_NUM: ${{ steps.meta.outputs.meta_number }}
         run: |
           if [ "$META_NUM" != "0" ] && [ -n "$META_NUM" ]; then
-            gh issue comment "$META_NUM" --body "@claude Task #${ISSUE_NUM} merged. Check progress and assign next tasks."
+            gh workflow run claude-meta.yml -f meta_issue="$META_NUM"
+            echo "Triggered meta workflow for issue #$META_NUM"
           fi
 
       # --- Failure notification ---
