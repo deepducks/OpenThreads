@@ -64,6 +64,7 @@ permissions:
   pull-requests: write
   issues: write
   id-token: write
+  actions: write  # required to call `gh workflow run` on meta workflow
 
 on:
   issue_comment:
