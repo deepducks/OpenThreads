@@ -115,6 +115,17 @@ if [[ -z "$BRANCH_EXISTS" ]]; then
   MAIN_SHA=$(gh api "repos/$REPO/git/refs/heads/main" --jq '.object.sha')
   gh api "repos/$REPO/git/refs" -X POST -f ref="refs/heads/$BRANCH" -f sha="$MAIN_SHA" >/dev/null
   FIRST_RUN=true
+
+  # Wait for the branch to be visible to subsequent API calls (replication lag).
+  # Without this, task workers dispatched right after may fail to checkout.
+  for i in 1 2 3 4 5; do
+    if gh api "repos/$REPO/git/refs/heads/$BRANCH" --jq '.ref' &>/dev/null; then
+      log "Branch $BRANCH is visible (attempt $i)"
+      break
+    fi
+    log "Waiting for branch $BRANCH to propagate (attempt $i)..."
+    sleep 1
+  done
 else
   log "Branch $BRANCH already exists"
 fi

@@ -156,9 +156,27 @@ jobs:
           echo "base_branch=$BASE_BRANCH" >> "$GITHUB_OUTPUT"
           echo "meta_number=$META_NUM" >> "$GITHUB_OUTPUT"
 
+      # --- Wait for base branch to be visible (replication lag) ---
+      # When meta dispatches a task worker right after creating meta/<N>,
+      # the branch may not be immediately visible to actions/checkout.
+      - name: Wait for base branch visibility
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BASE_BRANCH: ${{ steps.meta.outputs.base_branch }}
+        run: |
+          for i in 1 2 3 4 5 6 7 8 9 10; do
+            if gh api "repos/${{ github.repository }}/git/refs/heads/$BASE_BRANCH" --jq '.ref' &>/dev/null; then
+              echo "Branch $BASE_BRANCH is visible (attempt $i)"
+              exit 0
+            fi
+            echo "Waiting for branch $BASE_BRANCH to propagate (attempt $i)..."
+            sleep 2
+          done
+          echo "::error::Branch $BASE_BRANCH not visible after 10 attempts"
+          exit 1
+
       # --- Checkout the meta branch, NOT main ---
-      # This eliminates the root cause of merge conflicts. Early iterations
-      # checked out main, so every task branch diverged from meta/<N>.
+      # This eliminates the root cause of merge conflicts.
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
