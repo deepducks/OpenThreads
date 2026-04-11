@@ -4,57 +4,39 @@
 #
 # PURPOSE
 # -------
-# Semi-automated recovery for failed task workers. When a task agent fails
-# (timeout, code errors, conflict resolution failure), this workflow can be
-# triggered to pick up where it left off — using the existing branch and
-# error context to attempt a fix.
+# Semi-automated recovery for failed task workers. When a task worker fails
+# (timeout, code errors, conflict resolution failure), a human or automation
+# can comment `@claude fix` on the failed task issue to retry — this time
+# with visibility into the prior partial branch and failure context.
 #
-# HOW IT WORKS
-# ------------
-# 1. Triggered by an `@claude fix` comment on a non-meta issue.
-#    (The task worker excludes `@claude fix` from its own trigger.)
-# 2. Extracts context by reading all comments on the issue:
-#    - Base branch (from the orchestrator's original comment)
-#    - Existing branch (from the failed task worker's push)
-#    - Last failed run ID (for log reference)
-# 3. Checks out the existing branch if one was pushed, otherwise the base
-#    branch. This means the fix agent starts from whatever progress the
-#    task worker made before failing.
-# 4. Runs the Claude agent in interactive mode. The agent sees:
-#    - The original issue body (spec)
-#    - All comments including the failure notification and `@claude fix`
-#    - The existing code on the branch (partial implementation)
-# 5. After the agent finishes, creates a PR and merges — same post-step
-#    logic as the task worker.
-# 6. Posts a success/failure notification on both the task issue and the
-#    meta issue so the orchestrator can continue.
+# SEPARATION OF CONCERNS
+# ----------------------
+# Same pattern as claude-task.yml:
 #
-# WHEN TO USE
-# -----------
-# - Task worker timed out (60-minute limit hit mid-implementation)
-# - Task worker hit permission denials or tool errors
-# - Post-step conflict resolution failed
-# - Agent produced broken code that needs a targeted fix
+# Deterministic (bash):
+#   - Find base branch and existing partial branch from issue comments
+#   - Checkout existing branch (or base branch if no prior attempt)
+#   - Fetch issue spec to /tmp/task-spec.md
+#   - Fetch failure context to /tmp/failure-context.md
+#   - Commit and push whatever the agent wrote
+#   - Create or reuse PR
+#   - Merge PR
+#   - Trigger meta orchestrator
+#   - Notify result
 #
-# The failure notification step in claude-task.yml automatically suggests
-# `@claude fix` when a task fails, so the human just needs to comment it.
+# LLM (Claude agent):
+#   - Read the spec AND the failure context
+#   - Read the existing partial code (if any)
+#   - Fix or complete the implementation using Write/Edit tools
+#   - Nothing else: no git, no PR, no GitHub API calls
 #
-# NOTIFICATION
-# ------------
-# The fix agent ALWAYS posts a result comment (via `if: always()`):
-# - Success: "Fix agent succeeded" on the task issue
-# - Failure: "Fix agent also failed — manual intervention needed" on both
-#   the task issue and the meta issue
-# This ensures no failure goes silently unnoticed.
+# TRIGGERS
+# --------
+# - issue_comment with `@claude fix` on a non-meta issue
+# - (The task worker explicitly excludes `@claude fix` from its own triggers
+#   to avoid double execution.)
 #
-# TIMEOUT
-# -------
-# Same 60-minute limit as the task worker.
-#
-# `allowed_bots`
-# --------------
-# Set to `claude[bot]` so the fix can also be triggered by the meta
-# orchestrator or other automated comments, not just humans.
+# TIMEOUT: 60 minutes
 # =============================================================================
 
 name: Claude Fix Agent
@@ -64,7 +46,7 @@ permissions:
   pull-requests: write
   issues: write
   id-token: write
-  actions: write  # required to call `gh workflow run` on meta workflow
+  actions: write  # required to call `gh workflow run` on the meta workflow
 
 on:
   issue_comment:
@@ -75,110 +57,199 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
 
-    # Only triggers on `@claude fix`, only on non-meta issues.
     if: >
       contains(github.event.comment.body, '@claude fix')
       && !contains(toJSON(github.event.issue.labels.*.name), 'meta')
 
     steps:
-      # --- Gather context from issue history ---
-      # Reads all comments to find the base branch, existing branch,
-      # and last failed run. This lets the fix agent start with full context.
-      - name: Extract meta context
+      # --- Gather context from issue history (deterministic) ---
+      - name: Extract context
         id: meta
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ISSUE_NUM: ${{ github.event.issue.number }}
         run: |
-          # Find base branch from orchestrator's comment
+          # Find base branch from orchestrator's original assignment comment
           COMMENTS=$(gh api "repos/${{ github.repository }}/issues/${ISSUE_NUM}/comments" --jq '.[].body')
           BASE_BRANCH=$(echo "$COMMENTS" | grep -oP 'Base branch: `\K[^`]+' | tail -1 || echo "main")
           META_NUM=$(echo "$BASE_BRANCH" | grep -oP '\d+' || echo "0")
 
-          # Find existing branch pushed by the failed task worker (use gh api, not git ls-remote — git auth not available)
-          BRANCH=$(gh api "repos/${{ github.repository }}/git/matching-refs/heads/claude/" \
+          # Find existing partial branch pushed by the failed task worker
+          EXISTING_BRANCH=$(gh api "repos/${{ github.repository }}/git/matching-refs/heads/claude/" \
             --jq "[.[].ref | select(contains(\"issue-${ISSUE_NUM}-\"))] | sort | last // empty" \
             | sed 's|refs/heads/||' 2>/dev/null || echo "")
 
-          # Get the last failed run ID for reference
+          # Get the last failed run ID for log reference
           FAILED_RUN=$(gh run list --workflow=claude-task.yml --status=failure --limit=5 --json databaseId,createdAt \
             --jq 'sort_by(.createdAt) | reverse | .[0].databaseId' 2>/dev/null || echo "")
 
+          echo "issue_number=$ISSUE_NUM" >> "$GITHUB_OUTPUT"
           echo "base_branch=$BASE_BRANCH" >> "$GITHUB_OUTPUT"
           echo "meta_number=$META_NUM" >> "$GITHUB_OUTPUT"
-          echo "existing_branch=$BRANCH" >> "$GITHUB_OUTPUT"
+          echo "existing_branch=$EXISTING_BRANCH" >> "$GITHUB_OUTPUT"
           echo "failed_run=$FAILED_RUN" >> "$GITHUB_OUTPUT"
 
-      # --- Checkout existing branch or base branch ---
-      # If the task worker pushed a partial branch, check that out so the
-      # fix agent continues from the existing progress.
+          echo "Base branch: $BASE_BRANCH"
+          echo "Existing partial branch: ${EXISTING_BRANCH:-none}"
+          echo "Last failed run: ${FAILED_RUN:-none}"
+
+      # --- Checkout existing partial branch, or base branch if none ---
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           ref: ${{ steps.meta.outputs.existing_branch || steps.meta.outputs.base_branch }}
           fetch-depth: 0
 
-      # --- Run the Claude fix agent ---
-      # Interactive mode: sees issue body + all comments (including failure
-      # context and the `@claude fix` trigger).
+      # --- Prepare task branch and context files (deterministic) ---
+      - name: Prepare branch and context
+        id: prep
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          META_NUM: ${{ steps.meta.outputs.meta_number }}
+          ISSUE_NUM: ${{ steps.meta.outputs.issue_number }}
+          EXISTING_BRANCH: ${{ steps.meta.outputs.existing_branch }}
+          BASE_BRANCH: ${{ steps.meta.outputs.base_branch }}
+        run: |
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
+
+          if [[ -n "$EXISTING_BRANCH" ]]; then
+            # Continue on the existing partial branch
+            TASK_BRANCH="$EXISTING_BRANCH"
+            echo "Continuing existing branch: $TASK_BRANCH"
+          else
+            # No prior attempt — create a fresh branch from the base
+            TIMESTAMP=$(date +%Y%m%d-%H%M%S)
+            TASK_BRANCH="claude/${META_NUM}-issue-${ISSUE_NUM}-fix-${TIMESTAMP}"
+            git checkout -b "$TASK_BRANCH"
+            echo "Created new branch: $TASK_BRANCH"
+          fi
+
+          # Fetch issue body (the spec) to a local file
+          gh issue view "$ISSUE_NUM" --json title,body \
+            --jq '"# " + .title + "\n\n" + .body' > /tmp/task-spec.md
+
+          # Fetch the last ~10 comments for failure context
+          gh api "repos/${{ github.repository }}/issues/${ISSUE_NUM}/comments" \
+            --jq '[.[] | {author: .user.login, body: .body}] | .[-10:] | .[] | "## " + .author + "\n\n" + .body + "\n\n---\n"' \
+            > /tmp/failure-context.md
+
+          echo "task_branch=$TASK_BRANCH" >> "$GITHUB_OUTPUT"
+
+          echo "--- Spec ---"
+          cat /tmp/task-spec.md
+          echo "--- Failure context (last 10 comments) ---"
+          cat /tmp/failure-context.md
+          echo "--- End ---"
+
+      # --- Run the Claude fix agent (LLM only writes code) ---
       - name: Run Claude Fix Agent
         uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          claude_args: "--model claude-sonnet-4-6"
+          claude_args: "--model claude-sonnet-4-6 --allowedTools Read,Glob,Grep,Write,Edit,Bash"
           allowed_bots: "claude[bot],github-actions[bot]"
-          base_branch: ${{ steps.meta.outputs.base_branch }}
-          branch_prefix: "claude/${{ steps.meta.outputs.meta_number }}-"
+          prompt: |
+            A previous task worker attempt failed. Your job is to fix or complete the implementation.
 
-      # --- Auto-create PR and merge ---
-      # Same logic as the task worker post-step.
-      - name: Auto-create PR and merge
+            ## Inputs
+
+            - `/tmp/task-spec.md` — the original task specification (title, tasks, acceptance criteria)
+            - `/tmp/failure-context.md` — recent comments on the issue, including the failure notification and any error messages
+
+            ## What you're looking at
+
+            You are checked out on the task branch. If a previous attempt pushed code, it's here — read existing files to understand what was already done.
+
+            ## Steps
+
+            1. Read `/tmp/task-spec.md` to understand what needs to be built.
+            2. Read `/tmp/failure-context.md` to understand what went wrong.
+            3. Use Read/Glob/Grep to inspect existing code on the branch.
+            4. Use Write/Edit to fix or complete the implementation.
+            5. Follow the acceptance criteria in the spec.
+
+            ## Constraints
+
+            - Do NOT run `git` commands. The workflow handles git operations.
+            - Do NOT create branches, commits, or pull requests.
+            - Do NOT call the GitHub API.
+            - Just fix the code.
+
+      # --- Commit and push (deterministic) ---
+      - name: Commit and push task branch
+        if: success()
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE_NUM: ${{ steps.meta.outputs.issue_number }}
+          TASK_BRANCH: ${{ steps.prep.outputs.task_branch }}
+          REPO: ${{ github.repository }}
+        run: |
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
+
+          # Re-auth the remote (claude-code-action revokes credentials)
+          git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${REPO}.git"
+
+          git add -A
+          if git diff --cached --quiet; then
+            echo "::warning::Agent made no changes on top of existing branch"
+            # Not necessarily a failure — the existing branch might already have the fix
+            # Only fail if there's also no prior commit
+            if ! git log --oneline -1 &>/dev/null; then
+              echo "::error::No changes and no prior commits"
+              exit 1
+            fi
+          else
+            git commit -m "Fix implementation for issue #${ISSUE_NUM}"
+          fi
+
+          git push -u origin "$TASK_BRANCH"
+          echo "Pushed $TASK_BRANCH"
+
+      # --- Create PR (if none) and merge ---
+      - name: Create or merge PR
         if: success()
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          ISSUE_NUM: ${{ github.event.issue.number }}
+          ISSUE_NUM: ${{ steps.meta.outputs.issue_number }}
           BASE_BRANCH: ${{ steps.meta.outputs.base_branch }}
+          TASK_BRANCH: ${{ steps.prep.outputs.task_branch }}
         run: |
-          BRANCH=$(gh api "repos/${{ github.repository }}/git/matching-refs/heads/claude/" \
-            --jq "[.[].ref | select(contains(\"issue-${ISSUE_NUM}-\"))] | sort | last // empty" \
-            | sed 's|refs/heads/||' 2>/dev/null || echo "")
+          # Check if a PR already exists for this branch
+          EXISTING=$(gh pr list --head "$TASK_BRANCH" --base "$BASE_BRANCH" --json number --jq '.[0].number // empty')
 
-          if [ -z "$BRANCH" ]; then
-            echo "No branch found for issue #${ISSUE_NUM}"
-            exit 0
-          fi
-
-          # Check if PR already exists
-          EXISTING=$(gh pr list --head "$BRANCH" --base "$BASE_BRANCH" --json number --jq 'length' 2>/dev/null || echo "0")
-          if [ "$EXISTING" -gt 0 ]; then
-            PR_NUM=$(gh pr list --head "$BRANCH" --base "$BASE_BRANCH" --json number --jq '.[0].number')
-            echo "PR #$PR_NUM already exists, trying to merge..."
+          if [[ -n "$EXISTING" ]]; then
+            PR_NUM="$EXISTING"
+            echo "Reusing existing PR #$PR_NUM"
           else
             TITLE=$(gh issue view "$ISSUE_NUM" --json title --jq '.title')
-            PR_URL=$(gh pr create --base "$BASE_BRANCH" --head "$BRANCH" --title "$TITLE" --body "fixes #${ISSUE_NUM}")
+            PR_URL=$(gh pr create \
+              --base "$BASE_BRANCH" \
+              --head "$TASK_BRANCH" \
+              --title "$TITLE" \
+              --body "fixes #${ISSUE_NUM}")
             PR_NUM=$(echo "$PR_URL" | grep -oP '\d+$')
             echo "Created PR #$PR_NUM"
           fi
 
-          # Try merge, resolve conflicts if needed
+          # Try direct merge
           if gh pr merge "$PR_NUM" --merge 2>/dev/null; then
             echo "PR #$PR_NUM merged successfully"
             exit 0
           fi
 
-          # Fallback: merge via API
+          echo "Direct merge failed, attempting merge via API..."
           gh api "repos/${{ github.repository }}/pulls/${PR_NUM}/merge" \
             -X PUT -f merge_method=merge 2>/dev/null && {
             echo "PR #$PR_NUM merged via API"
             exit 0
           }
 
-          echo "Merge failed — PR may need manual conflict resolution"
+          echo "::error::Merge failed — PR may need manual conflict resolution"
           exit 1
 
-      # --- Trigger meta orchestrator to continue the loop ---
-      # Uses workflow_dispatch because GITHUB_TOKEN-generated events (comments,
-      # merges) don't trigger other workflows, but workflow_dispatch IS allowed.
+      # --- Trigger meta to continue the loop ---
       - name: Trigger meta to continue loop
         if: success()
         env:
@@ -191,13 +262,11 @@ jobs:
           fi
 
       # --- Always notify the result ---
-      # Posts on the task issue AND the meta issue (on failure).
-      # Uses `if: always()` so notification happens even on failure.
       - name: Notify fix result
         if: always()
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          ISSUE_NUM: ${{ github.event.issue.number }}
+          ISSUE_NUM: ${{ steps.meta.outputs.issue_number }}
           META_NUM: ${{ steps.meta.outputs.meta_number }}
           RUN_ID: ${{ github.run_id }}
           JOB_STATUS: ${{ job.status }}
