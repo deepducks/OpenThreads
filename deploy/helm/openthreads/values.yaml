@@ -1,0 +1,136 @@
+# Default values for the OpenThreads Helm chart.
+# Override these in a custom values file: helm install openthreads ./openthreads -f my-values.yaml
+
+# ─── Image ────────────────────────────────────────────────────────────────────
+image:
+  repository: ghcr.io/deepducks/openthreads
+  tag: ""          # Defaults to .Chart.AppVersion when empty
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+# ─── Deployment ───────────────────────────────────────────────────────────────
+replicaCount: 1
+
+podAnnotations: {}
+podLabels: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1001
+
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop: [ALL]
+  readOnlyRootFilesystem: true
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+# ─── Service ──────────────────────────────────────────────────────────────────
+service:
+  type: ClusterIP
+  port: 3000
+
+# ─── Ingress ──────────────────────────────────────────────────────────────────
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: openthreads.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+# ─── Environment ──────────────────────────────────────────────────────────────
+env:
+  NODE_ENV: production
+  PORT: "3000"
+  LOG_LEVEL: info
+  LOG_FORMAT: json
+  REPLY_TOKEN_TTL: "86400"
+
+# ─── Secrets (stored in a Kubernetes Secret — do NOT put plain values here) ───
+# Reference an existing secret instead:
+#   existingSecret: my-openthreads-secret
+# Or let the chart create one from the values below (not recommended for prod):
+secrets:
+  # Required
+  JWT_SECRET: ""
+  MONGODB_URI: ""
+  # Optional
+  MANAGEMENT_API_KEY: ""
+  OPENTHREADS_BASE_URL: ""
+  # Channel credentials
+  SLACK_BOT_TOKEN: ""
+  SLACK_SIGNING_SECRET: ""
+  SLACK_APP_TOKEN: ""
+  TELEGRAM_BOT_TOKEN: ""
+  DISCORD_BOT_TOKEN: ""
+  DISCORD_CLIENT_ID: ""
+  # Trust layer
+  TRUST_LAYER_ENABLED: "false"
+
+# Reference an existing secret instead of creating one from 'secrets' above.
+existingSecret: ""
+
+# ─── Health check ─────────────────────────────────────────────────────────────
+livenessProbe:
+  httpGet:
+    path: /api/health
+    port: 3000
+  initialDelaySeconds: 15
+  periodSeconds: 30
+  timeoutSeconds: 5
+  failureThreshold: 3
+
+readinessProbe:
+  httpGet:
+    path: /api/health
+    port: 3000
+  initialDelaySeconds: 5
+  periodSeconds: 10
+  timeoutSeconds: 3
+  failureThreshold: 3
+
+# ─── MongoDB (sub-chart, disabled by default — use an external MongoDB in prod) ─
+mongodb:
+  enabled: false
+  auth:
+    rootPassword: ""
+    username: openthreads
+    password: openthreads
+    database: openthreads
+
+# ─── ServiceAccount ───────────────────────────────────────────────────────────
+serviceAccount:
+  create: true
+  automount: true
+  annotations: {}
+  name: ""
+
+# ─── Autoscaling ──────────────────────────────────────────────────────────────
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 5
+  targetCPUUtilizationPercentage: 70
+
+# ─── Prometheus scraping ──────────────────────────────────────────────────────
+metrics:
+  # Add Prometheus scrape annotations to the pod
+  annotations: true
